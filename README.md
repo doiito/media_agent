@@ -96,6 +96,8 @@ A production-grade ComfyUI workflow system implemented in Rust, integrated with 
 
 ```
 media_agent/
+├── deps/
+│   └── gliding_horse/      # gliding_horse Agent OS dependency (Git Submodule)
 ├── src/
 │   ├── lib.rs              # Library entry
 │   ├── types.rs            # Core type definitions
@@ -132,19 +134,30 @@ media_agent/
 
 ## Installation & Build
 
-### Requirements
+### Prerequisites
 
-- Rust 1.70+ (Clang compiler recommended)
-- CUDA 11.x+ (for GPU inference)
-- stable-diffusion.cpp compiled binary
+- **protoc** (Protobuf compiler) — required by gliding_horse Agent OS for gRPC proto compilation
+  - Linux: `sudo apt install protobuf-compiler`
+  - macOS: `brew install protobuf`
+  - Windows: download from [protobuf releases](https://github.com/protocolbuffers/protobuf/releases)
+
+### Clone
+
+This project depends on [gliding_horse Agent OS](https://github.com/doiito/gliding_horse.git), managed as a Git Submodule. Make sure to pull submodules when cloning:
+
+```bash
+# Option 1: Clone with submodules automatically
+git clone --recurse-submodules https://github.com/doiito/media_agent.git
+
+# Option 2: Clone then initialize submodules
+git clone https://github.com/doiito/media_agent.git
+cd media_agent
+git submodule update --init --recursive
+```
 
 ### Build
 
 ```bash
-# Set Clang compiler
-export CC=clang CXX=clang++ CCACHE_DISABLE=1
-
-# Build
 cargo build --release
 
 # Run tests

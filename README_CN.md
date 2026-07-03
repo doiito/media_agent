@@ -96,6 +96,8 @@
 
 ```
 media_agent/
+├── deps/
+│   └── gliding_horse/      # gliding_horse Agent OS 依赖 (Git Submodule)
 ├── src/
 │   ├── lib.rs              # 库入口
 │   ├── types.rs            # 核心类型定义
@@ -132,19 +134,30 @@ media_agent/
 
 ## 安装与构建
 
-### 系统要求
+### 前置依赖
 
-- Rust 1.70+ (推荐使用 Clang 编译器)
-- CUDA 11.x+ (GPU推理)
-- stable-diffusion.cpp 编译版本
+- **protoc** (Protobuf 编译器) — gliding_horse Agent OS 依赖，用于编译 gRPC proto 文件
+  - Linux: `sudo apt install protobuf-compiler`
+  - macOS: `brew install protobuf`
+  - Windows: 从 [protobuf releases](https://github.com/protocolbuffers/protobuf/releases) 下载
+
+### 克隆
+
+本项目依赖 [gliding_horse Agent OS](https://github.com/doiito/gliding_horse.git)，作为 Git Submodule 管理。克隆时需要拉取子模块：
+
+```bash
+# 方式一：克隆时自动拉取子模块
+git clone --recurse-submodules https://github.com/doiito/media_agent.git
+
+# 方式二：已克隆后补拉子模块
+git clone https://github.com/doiito/media_agent.git
+cd media_agent
+git submodule update --init --recursive
+```
 
 ### 编译
 
 ```bash
-# 设置 Clang 编译器
-export CC=clang CXX=clang++ CCACHE_DISABLE=1
-
-# 构建
 cargo build --release
 
 # 运行测试
