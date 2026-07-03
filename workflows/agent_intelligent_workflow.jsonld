@@ -1,0 +1,71 @@
+{
+  "@context": "https://schema.org",
+  "@type": "Workflow",
+  "name": "agent_intelligent_workflow",
+  "description": "Agent 智能工作流 - LLM 自动选择最佳 workflow 组合",
+  "version": "1.0.0",
+  "category": "agent",
+  "mode": "intelligent",
+  "workflow_selection_rules": [
+    {
+      "condition": "request contains 'high quality' or 'masterpiece'",
+      "workflow": "high_quality_generation.jsonld"
+    },
+    {
+      "condition": "request contains 'style' or 'artistic'",
+      "workflow": "lora_style.jsonld"
+    },
+    {
+      "condition": "request contains 'video' or 'animation'",
+      "workflow": "image_to_video_svd.jsonld"
+    },
+    {
+      "condition": "request contains 'depth' or '3d'",
+      "workflow": "controlnet_depth.jsonld"
+    },
+    {
+      "condition": "request contains 'lineart' or 'sketch'",
+      "workflow": "controlnet_lineart.jsonld"
+    },
+    {
+      "condition": "request contains 'upscale' or 'larger'",
+      "workflow": "upscale_image.jsonld"
+    },
+    {
+      "condition": "request contains 'face' or 'portrait'",
+      "workflow": "face_restore.jsonld"
+    },
+    {
+      "condition": "request contains 'multiple' or 'batch'",
+      "workflow": "batch_generation.jsonld"
+    },
+    {
+      "condition": "default",
+      "workflow": "text_to_image_basic.jsonld"
+    }
+  ],
+  "fallback_chain": [
+    "text_to_image_basic.jsonld",
+    "high_quality_generation.jsonld"
+  ],
+  "parameter_inference": {
+    "width": {
+      "rule": "if 'large' in request then 1024 else 512"
+    },
+    "steps": {
+      "rule": "if 'quality' in request then 30 else 20"
+    },
+    "model": {
+      "rule": "if 'sdxl' in request then 'sdxl_base_1.0.safetensors' else 'v1-5-pruned-emaonly.safetensors'"
+    }
+  },
+  "quality_check": {
+    "enabled": true,
+    "min_file_size_kb": 50,
+    "max_iterations": 3,
+    "retry_with_adjustments": {
+      "increase_steps": 5,
+      "adjust_cfg": 0.5
+    }
+  }
+}

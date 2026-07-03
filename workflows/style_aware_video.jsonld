@@ -1,0 +1,105 @@
+{
+  "@context": "https://schema.org",
+  "@type": "Workflow",
+  "name": "style_aware_video",
+  "description": "风格感知视频生成 - 使用 LoRA 风格生成带风格动画的视频",
+  "version": "1.0.0",
+  "category": "video",
+  "steps": [
+    {
+      "@type": "WorkflowStep",
+      "name": "load_model",
+      "action": "CheckpointLoaderSimple",
+      "inputs": {
+        "ckpt_name": "${model}"
+      },
+      "outputs": ["model", "clip", "vae"]
+    },
+    {
+      "@type": "WorkflowStep",
+      "name": "load_style_lora",
+      "action": "LoraLoader",
+      "inputs": {
+        "model": { "from": "load_model", "output": "model" },
+        "clip": { "from": "load_model", "output": "clip" },
+        "lora_name": "${style_lora}",
+        "strength_model": "${style_strength}",
+        "strength_clip": "${style_strength}"
+      },
+      "outputs": ["styled_model", "styled_clip"]
+    },
+    {
+      "@type": "WorkflowStep",
+      "name": "encode_prompt",
+      "action": "CLIPTextEncode",
+      "inputs": {
+        "text": "${prompt}",
+        "clip": { "from": "load_style_lora", "output": "styled_clip" }
+      },
+      "outputs": ["conditioning"]
+    },
+    {
+      "@type": "WorkflowStep",
+      "name": "generate_keyframes",
+      "action": "AnimatedDiffSampler",
+      "inputs": {
+        "model": { "from": "load_style_lora", "output": "styled_model" },
+        "positive": { "from": "encode_prompt", "output": "conditioning" },
+        "width": "${width}",
+        "height": "${height}",
+        "frames": "${keyframe_count}",
+        "seed": "${seed}",
+        "steps": "${steps}",
+        "cfg": "${cfg}",
+        "animation_mode": "${animation_mode}"
+      },
+      "outputs": ["keyframe_sequence"]
+    },
+    {
+      "@type": "WorkflowStep",
+      "name": "apply_frame_interpolation",
+      "action": "FrameInterpolation",
+      "inputs": {
+        "frames": { "from": "generate_keyframes", "output": "keyframe_sequence" },
+        "interpolation_frames": "${interpolation_frames_per_keyframe}"
+      },
+      "outputs": ["full_frame_sequence"]
+    },
+    {
+      "@type": "WorkflowStep",
+      "name": "decode_frames",
+      "action": "BatchVAEDecode",
+      "inputs": {
+        "samples": { "from": "apply_frame_interpolation", "output": "full_frame_sequence" },
+        "vae": { "from": "load_model", "output": "vae" }
+      },
+      "outputs": ["decoded_frames"]
+    },
+    {
+      "@type": "WorkflowStep",
+      "name": "save_frames",
+      "action": "SaveImageSequence",
+      "inputs": {
+        "images": { "from": "decode_frames", "output": "decoded_frames" },
+        "output_directory": "${output_directory}",
+        "filename_prefix": "styled_video_"
+      },
+      "outputs": ["saved_paths"]
+    }
+  ],
+  "parameters": {
+    "prompt": { "type": "string", "required": true, "description": "Video content prompt" },
+    "model": { "type": "string", "default": "v1-5-pruned-emaonly.safetensors" },
+    "style_lora": { "type": "string", "default": "pixart_style.safetensors" },
+    "style_strength": { "type": "float", "default": 0.8 },
+    "width": { "type": "integer", "default": 512 },
+    "height": { "type": "integer", "default": 512 },
+    "keyframe_count": { "type": "integer", "default": 8 },
+    "interpolation_frames_per_keyframe": { "type": "integer", "default": 4 },
+    "steps": { "type": "integer", "default": 20 },
+    "cfg": { "type": "float", "default": 7.0 },
+    "seed": { "type": "integer", "default": -1 },
+    "animation_mode": { "type": "string", "default": "2D", "enum": ["2D", "3D", "Video"] },
+    "output_directory": { "type": "string", "default": "output/style_video" }
+  }
+}

@@ -1,0 +1,97 @@
+{
+  "@context": "https://schema.org",
+  "@type": "Workflow",
+  "name": "text_to_image_basic",
+  "description": "基础文生图工作流 - 单张图片生成",
+  "version": "1.0.0",
+  "category": "generation",
+  "steps": [
+    {
+      "@type": "WorkflowStep",
+      "name": "load_model",
+      "action": "CheckpointLoaderSimple",
+      "inputs": {
+        "ckpt_name": "v1-5-pruned-emaonly.safetensors"
+      },
+      "outputs": ["model", "clip", "vae"]
+    },
+    {
+      "@type": "WorkflowStep",
+      "name": "encode_positive",
+      "action": "CLIPTextEncode",
+      "inputs": {
+        "text": "${prompt}",
+        "clip": { "from": "load_model", "output": "clip" }
+      },
+      "outputs": ["positive_conditioning"]
+    },
+    {
+      "@type": "WorkflowStep",
+      "name": "encode_negative",
+      "action": "CLIPTextEncode",
+      "inputs": {
+        "text": "${negative_prompt}",
+        "clip": { "from": "load_model", "output": "clip" }
+      },
+      "outputs": ["negative_conditioning"]
+    },
+    {
+      "@type": "WorkflowStep",
+      "name": "create_latent",
+      "action": "EmptyLatentImage",
+      "inputs": {
+        "width": "${width}",
+        "height": "${height}",
+        "batch_size": 1
+      },
+      "outputs": ["latent"]
+    },
+    {
+      "@type": "WorkflowStep",
+      "name": "sample",
+      "action": "KSampler",
+      "inputs": {
+        "model": { "from": "load_model", "output": "model" },
+        "positive": { "from": "encode_positive", "output": "positive_conditioning" },
+        "negative": { "from": "encode_negative", "output": "negative_conditioning" },
+        "latent_image": { "from": "create_latent", "output": "latent" },
+        "seed": "${seed}",
+        "steps": "${steps}",
+        "cfg": "${cfg}",
+        "sampler_name": "euler",
+        "scheduler": "normal",
+        "denoise": 1.0
+      },
+      "outputs": ["samples"]
+    },
+    {
+      "@type": "WorkflowStep",
+      "name": "decode",
+      "action": "VAEDecode",
+      "inputs": {
+        "samples": { "from": "sample", "output": "samples" },
+        "vae": { "from": "load_model", "output": "vae" }
+      },
+      "outputs": ["image"]
+    },
+    {
+      "@type": "WorkflowStep",
+      "name": "save",
+      "action": "SaveImage",
+      "inputs": {
+        "images": { "from": "decode", "output": "image" },
+        "filename_prefix": "ComfyUI"
+      },
+      "outputs": ["saved_path"]
+    }
+  ],
+  "parameters": {
+    "prompt": { "type": "string", "default": "a beautiful landscape", "required": true },
+    "negative_prompt": { "type": "string", "default": "blurry, low quality" },
+    "width": { "type": "integer", "default": 512, "min": 64, "max": 2048 },
+    "height": { "type": "integer", "default": 512, "min": 64, "max": 2048 },
+    "steps": { "type": "integer", "default": 20, "min": 1, "max": 150 },
+    "cfg": { "type": "float", "default": 7.0, "min": 1.0, "max": 30.0 },
+    "seed": { "type": "integer", "default": -1 }
+  }
+}

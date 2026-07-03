@@ -1,0 +1,38 @@
+{
+  "@context": {"wf": "https://agent-harness.os/workflow#", "schema": "https://schema.org/"},
+  "@graph": [
+    {
+      "@id": "wf:batch-generate-pipeline",
+      "@type": "Workflow",
+      "wf:name": "Batch Generate Images",
+      "wf:description": "Generate multiple images from a list of prompts",
+      "wf:entryNode": "step_plan",
+      "wf:nodes": [{"@id": "step_plan"}, {"@id": "step_generate"}, {"@id": "step_collect"}]
+    },
+    {
+      "@id": "step_plan",
+      "@type": "AgentNode",
+      "wf:agentRole": "PA",
+      "wf:objective": "Parse user request and plan batch generation strategy",
+      "wf:tools": ["list_nodes", "health_check"],
+      "wf:next": "step_generate"
+    },
+    {
+      "@id": "step_generate",
+      "@type": "AgentNode",
+      "wf:agentRole": "DA",
+      "wf:objective": "Generate images for each prompt in the batch using parallel execution",
+      "wf:tools": ["build_t2i_workflow", "submit_workflow"],
+      "wf:next": "step_collect",
+      "wf:maxIterations": 10
+    },
+    {
+      "@id": "step_collect",
+      "@type": "AgentNode",
+      "wf:agentRole": "DA",
+      "wf:objective": "Collect all generated image paths and return summary",
+      "wf:tools": ["health_check"],
+      "wf:finalNode": true
+    }
+  ]
+}

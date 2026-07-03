@@ -1,0 +1,45 @@
+{
+  "@context": {"wf": "https://agent-harness.os/workflow#", "schema": "https://schema.org/"},
+  "@graph": [
+    {
+      "@id": "wf:generate-image-pipeline",
+      "@type": "Workflow",
+      "wf:name": "Generate and Review Image",
+      "wf:description": "Generate an image from text prompt, review quality, and retry if needed",
+      "wf:entryNode": "step_generate",
+      "wf:nodes": [{"@id": "step_generate"}, {"@id": "step_review"}, {"@id": "step_retry"}]
+    },
+    {
+      "@id": "step_generate",
+      "@type": "AgentNode",
+      "wf:agentRole": "DA",
+      "wf:objective": "Generate an image from user prompt using build_t2i_workflow and submit_workflow tools",
+      "wf:tools": ["build_t2i_workflow", "submit_workflow"],
+      "wf:next": "step_review",
+      "wf:successCriteria": "Image generated successfully with prompt_id returned"
+    },
+    {
+      "@id": "step_review",
+      "@type": "AgentNode",
+      "wf:agentRole": "CA",
+      "wf:objective": "Review the generated image quality using health_check and assess if meets criteria",
+      "wf:tools": ["health_check", "list_nodes"],
+      "wf:branchOnFailure": {
+        "wf:condition": "$.result.status == 'failed' || $.result.quality_score < 0.7",
+        "wf:target": "step_retry"
+      },
+      "wf:nextNodes": [],
+      "wf:finalNode": true
+    },
+    {
+      "@id": "step_retry",
+      "@type": "AgentNode",
+      "wf:agentRole": "DA",
+      "wf:objective": "Retry image generation with adjusted parameters (increase steps, adjust seed)",
+      "wf:tools": ["build_t2i_workflow", "submit_workflow"],
+      "wf:retryCount": 2,
+      "wf:retryDelaySecs": 5,
+      "wf:next": "step_review"
+    }
+  ]
+}

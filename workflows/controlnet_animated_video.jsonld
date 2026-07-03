@@ -1,0 +1,109 @@
+{
+  "@context": "https://schema.org",
+  "@type": "Workflow",
+  "name": "controlnet_animated_video",
+  "description": "ControlNet 动画视频生成 - 使用姿态/深度控制生成动画视频",
+  "version": "1.0.0",
+  "category": "video",
+  "steps": [
+    {
+      "@type": "WorkflowStep",
+      "name": "load_model",
+      "action": "CheckpointLoaderSimple",
+      "inputs": {
+        "ckpt_name": "${model}"
+      },
+      "outputs": ["model", "clip", "vae"]
+    },
+    {
+      "@type": "WorkflowStep",
+      "name": "load_controlnet",
+      "action": "ControlNetLoader",
+      "inputs": {
+        "controlnet_name": "${controlnet_type}"
+      },
+      "outputs": ["controlnet"]
+    },
+    {
+      "@type": "WorkflowStep",
+      "name": "load_control_sequence",
+      "action": "LoadImageSequence",
+      "inputs": {
+        "directory": "${control_sequence_directory}",
+        "pattern": "*.png"
+      },
+      "outputs": ["control_frames"]
+    },
+    {
+      "@type": "WorkflowStep",
+      "name": "apply_controlnet_sequence",
+      "action": "ControlNetApplySequence",
+      "inputs": {
+        "controlnet": { "from": "load_controlnet", "output": "controlnet" },
+        "control_frames": { "from": "load_control_sequence", "output": "control_frames" },
+        "strength": "${controlnet_strength}"
+      },
+      "outputs": ["controlled_conditionings"]
+    },
+    {
+      "@type": "WorkflowStep",
+      "name": "encode_prompt",
+      "action": "CLIPTextEncode",
+      "inputs": {
+        "text": "${prompt}",
+        "clip": { "from": "load_model", "output": "clip" }
+      },
+      "outputs": ["prompt_conditioning"]
+    },
+    {
+      "@type": "WorkflowStep",
+      "name": "generate_control_video",
+      "action": "ControlNetVideoSampler",
+      "inputs": {
+        "model": { "from": "load_model", "output": "model" },
+        "control_conditionings": { "from": "apply_controlnet_sequence", "output": "controlled_conditionings" },
+        "prompt_conditioning": { "from": "encode_prompt", "output": "prompt_conditioning" },
+        "width": "${width}",
+        "height": "${height}",
+        "seed": "${seed}",
+        "steps": "${steps}",
+        "cfg": "${cfg}"
+      },
+      "outputs": ["video_latents"]
+    },
+    {
+      "@type": "WorkflowStep",
+      "name": "decode_video",
+      "action": "BatchVAEDecode",
+      "inputs": {
+        "samples": { "from": "generate_control_video", "output": "video_latents" },
+        "vae": { "from": "load_model", "output": "vae" }
+      },
+      "outputs": ["video_frames"]
+    },
+    {
+      "@type": "WorkflowStep",
+      "name": "save_video",
+      "action": "SaveImageSequence",
+      "inputs": {
+        "images": { "from": "decode_video", "output": "video_frames" },
+        "output_directory": "${output_directory}",
+        "filename_prefix": "controlnet_video_"
+      },
+      "outputs": ["saved_paths"]
+    }
+  ],
+  "parameters": {
+    "prompt": { "type": "string", "required": true },
+    "model": { "type": "string", "default": "v1-5-pruned-emaonly.safetensors" },
+    "controlnet_type": { "type": "string", "default": "control_v11p_sd15_openpose.safetensors" },
+    "control_sequence_directory": { "type": "string", "required": true },
+    "controlnet_strength": { "type": "float", "default": 1.0 },
+    "width": { "type": "integer", "default": 512 },
+    "height": { "type": "integer", "default": 512 },
+    "steps": { "type": "integer", "default": 20 },
+    "cfg": { "type": "float", "default": 7.0 },
+    "seed": { "type": "integer", "default": -1 },
+    "output_directory": { "type": "string", "default": "output/controlnet_video" }
+  }
+}

@@ -1,0 +1,57 @@
+{
+  "@context": "https://schema.org",
+  "@type": "Workflow",
+  "name": "upscale_image",
+  "description": "图片放大工作流 - 使用 ESRGAN 放大图片",
+  "version": "1.0.0",
+  "category": "postprocess",
+  "steps": [
+    {
+      "@type": "WorkflowStep",
+      "name": "load_model",
+      "action": "CheckpointLoaderSimple",
+      "inputs": {
+        "ckpt_name": "v1-5-pruned-emaonly.safetensors"
+      },
+      "outputs": ["model", "clip", "vae"]
+    },
+    {
+      "@type": "WorkflowStep",
+      "name": "load_image",
+      "action": "LoadImage",
+      "inputs": {
+        "image": "${input_image_path}"
+      },
+      "outputs": ["pixels"]
+    },
+    {
+      "@type": "WorkflowStep",
+      "name": "upscale",
+      "action": "ImageScale",
+      "inputs": {
+        "images": { "from": "load_image", "output": "pixels" },
+        "upscale_method": "${upscale_method}",
+        "width": "${target_width}",
+        "height": "${target_height}",
+        "crop": "disabled"
+      },
+      "outputs": ["upscaled_image"]
+    },
+    {
+      "@type": "WorkflowStep",
+      "name": "save",
+      "action": "SaveImage",
+      "inputs": {
+        "images": { "from": "upscale", "output": "upscaled_image" },
+        "filename_prefix": "Upscaled"
+      },
+      "outputs": ["saved_path"]
+    }
+  ],
+  "parameters": {
+    "input_image_path": { "type": "string", "required": true },
+    "upscale_method": { "type": "string", "default": "nearest-exact", "enum": ["nearest-exact", "bilinear", "lanczos"] },
+    "target_width": { "type": "integer", "default": 1024 },
+    "target_height": { "type": "integer", "default": 1024 }
+  }
+}

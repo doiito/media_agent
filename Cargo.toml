@@ -1,0 +1,95 @@
+[package]
+name = "comfyui-rust-agent"
+version = "0.1.0"
+edition = "2021"
+authors = ["ComfyUI Rust Team"]
+description = "Rust implementation of enhanced ComfyUI intelligent agent system"
+
+[dependencies]
+# Web framework
+axum = { version = "0.7", features = ["multipart", "ws", "macros"] }
+tower = "0.5"
+tower-http = { version = "0.6", features = ["fs", "cors", "trace"] }
+
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+tokio-tungstenite = "0.24"
+futures = "0.3"
+async-trait = "0.1"
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# UUID
+uuid = { version = "1", features = ["v4", "serde"] }
+
+# Hashing
+blake3 = "1"
+
+# Random number generation
+rand = "0.8"
+
+# Date/time
+chrono = { version = "0.4", features = ["serde"] }
+
+# Image processing
+image = "0.25"
+
+# File system
+walkdir = "2"
+mime_guess = "2"
+glob = "0.3"
+
+# Encoding
+base64 = "0.22"
+
+# Process management
+sysinfo = "0.32"
+
+# Error handling
+thiserror = "1"
+anyhow = "1"
+
+# Logging
+log = "0.4"
+env_logger = "0.11"
+
+# Config
+config = "0.14"
+
+# HTTP client (for backend communication)
+reqwest = { version = "0.12", features = ["json"] }
+
+# Concurrent collections
+dashmap = "6"
+
+# Thread pool
+rayon = "1"
+
+# Command line
+clap = { version = "4", features = ["derive"] }
+
+# gliding_horse Agent OS（本地路径依赖）
+glidinghorse = { path = "../gliding_horse" }
+
+[dev-dependencies]
+tokio-test = "0.4"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+strip = true
+
+[profile.dev]
+opt-level = 0
+debug = true
+
+[[bin]]
+name = "comfyui-server"
+path = "src/bin/server.rs"
+
+[[bin]]
+name = "comfyui-cli"
+path = "src/bin/cli.rs"

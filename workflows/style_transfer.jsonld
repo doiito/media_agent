@@ -1,0 +1,127 @@
+{
+  "@context": "https://schema.org",
+  "@type": "Workflow",
+  "name": "style_transfer",
+  "description": "风格迁移工作流 - 将参考图风格应用到新生成图片",
+  "version": "1.0.0",
+  "category": "style",
+  "steps": [
+    {
+      "@type": "WorkflowStep",
+      "name": "load_model",
+      "action": "CheckpointLoaderSimple",
+      "inputs": {
+        "ckpt_name": "${model}"
+      },
+      "outputs": ["model", "clip", "vae"]
+    },
+    {
+      "@type": "WorkflowStep",
+      "name": "load_style_reference",
+      "action": "LoadImage",
+      "inputs": {
+        "image": "${style_reference_path}"
+      },
+      "outputs": ["reference_image"]
+    },
+    {
+      "@type": "WorkflowStep",
+      "name": "encode_style",
+      "action": "StyleModelApply",
+      "inputs": {
+        "image": { "from": "load_style_reference", "output": "reference_image" }
+      },
+      "outputs": ["style_conditioning"]
+    },
+    {
+      "@type": "WorkflowStep",
+      "name": "encode_positive",
+      "action": "CLIPTextEncode",
+      "inputs": {
+        "text": "${prompt}",
+        "clip": { "from": "load_model", "output": "clip" }
+      },
+      "outputs": ["positive"]
+    },
+    {
+      "@type": "WorkflowStep",
+      "name": "combine_conditioning",
+      "action": "ConditioningCombine",
+      "inputs": {
+        "conditioning_1": { "from": "encode_positive", "output": "positive" },
+        "conditioning_2": { "from": "encode_style", "output": "style_conditioning" }
+      },
+      "outputs": ["combined_positive"]
+    },
+    {
+      "@type": "WorkflowStep",
+      "name": "encode_negative",
+      "action": "CLIPTextEncode",
+      "inputs": {
+        "text": "${negative_prompt}",
+        "clip": { "from": "load_model", "output": "clip" }
+      },
+      "outputs": ["negative"]
+    },
+    {
+      "@type": "WorkflowStep",
+      "name": "create_latent",
+      "action": "EmptyLatentImage",
+      "inputs": {
+        "width": "${width}",
+        "height": "${height}",
+        "batch_size": 1
+      },
+      "outputs": ["latent"]
+    },
+    {
+      "@type": "WorkflowStep",
+      "name": "sample",
+      "action": "KSampler",
+      "inputs": {
+        "model": { "from": "load_model", "output": "model" },
+        "positive": { "from": "combine_conditioning", "output": "combined_positive" },
+        "negative": { "from": "encode_negative", "output": "negative" },
+        "latent_image": { "from": "create_latent", "output": "latent" },
+        "seed": "${seed}",
+        "steps": "${steps}",
+        "cfg": "${cfg}",
+        "sampler_name": "euler",
+        "scheduler": "normal",
+        "denoise": 1.0
+      },
+      "outputs": ["samples"]
+    },
+    {
+      "@type": "WorkflowStep",
+      "name": "decode",
+      "action": "VAEDecode",
+      "inputs": {
+        "samples": { "from": "sample", "output": "samples" },
+        "vae": { "from": "load_model", "output": "vae" }
+      },
+      "outputs": ["image"]
+    },
+    {
+      "@type": "WorkflowStep",
+      "name": "save",
+      "action": "SaveImage",
+      "inputs": {
+        "images": { "from": "decode", "output": "image" },
+        "filename_prefix": "StyleTransfer"
+      },
+      "outputs": ["saved_path"]
+    }
+  ],
+  "parameters": {
+    "style_reference_path": { "type": "string", "required": true },
+    "prompt": { "type": "string", "default": "artistic style", "required": true },
+    "negative_prompt": { "type": "string", "default": "blurry" },
+    "model": { "type": "string", "default": "v1-5-pruned-emaonly.safetensors" },
+    "width": { "type": "integer", "default": 512 },
+    "height": { "type": "integer", "default": 512 },
+    "steps": { "type": "integer", "default": 20 },
+    "cfg": { "type": "float", "default": 7.0 },
+    "seed": { "type": "integer", "default": -1 }
+  }
+}

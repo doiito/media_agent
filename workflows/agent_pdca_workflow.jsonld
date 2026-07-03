@@ -1,0 +1,64 @@
+{
+  "@context": "https://schema.org",
+  "@type": "Workflow",
+  "name": "agent_pdca_workflow",
+  "description": "Agent PDCA 智能工作流 - 自动规划执行检查调整",
+  "version": "1.0.0",
+  "category": "agent",
+  "mode": "pdca",
+  "pdca_cycle": {
+    "plan": {
+      "description": "分析用户请求，制定生成计划",
+      "actions": [
+        "parse_intent",
+        "determine_workflow_type",
+        "estimate_parameters",
+        "select_model"
+      ]
+    },
+    "do": {
+      "description": "执行生成任务",
+      "actions": [
+        "load_model",
+        "prepare_inputs",
+        "execute_sampling",
+        "decode_output"
+      ]
+    },
+    "check": {
+      "description": "检查生成结果质量",
+      "actions": [
+        "validate_output",
+        "check_quality",
+        "compare_with_expectations"
+      ]
+    },
+    "act": {
+      "description": "根据检查结果调整",
+      "actions": [
+        "adjust_parameters_if_needed",
+        "regenerate_if_unsatisfied",
+        "save_final_result"
+      ]
+    }
+  },
+  "workflow_selection": {
+    "text_to_image": "text_to_image_basic.jsonld",
+    "image_to_image": "image_to_image.jsonld",
+    "high_quality": "high_quality_generation.jsonld",
+    "batch": "batch_generation.jsonld",
+    "upscale": "upscale_image.jsonld",
+    "inpainting": "inpainting.jsonld",
+    "controlnet": "controlnet_pose.jsonld",
+    "lora": "lora_style.jsonld"
+  },
+  "quality_thresholds": {
+    "min_resolution": 256,
+    "min_file_size_kb": 50,
+    "max_iterations": 3
+  },
+  "fallback_strategy": {
+    "on_failure": "retry_with_reduced_params",
+    "max_retries": 2
+  }
+}

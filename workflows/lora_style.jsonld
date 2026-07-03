@@ -1,0 +1,112 @@
+{
+  "@context": "https://schema.org",
+  "@type": "Workflow",
+  "name": "lora_style",
+  "description": "LoRA 风格工作流 - 应用特定风格 LoRA",
+  "version": "1.0.0",
+  "category": "style",
+  "steps": [
+    {
+      "@type": "WorkflowStep",
+      "name": "load_model",
+      "action": "CheckpointLoaderSimple",
+      "inputs": {
+        "ckpt_name": "v1-5-pruned-emaonly.safetensors"
+      },
+      "outputs": ["model", "clip", "vae"]
+    },
+    {
+      "@type": "WorkflowStep",
+      "name": "load_lora",
+      "action": "LoraLoader",
+      "inputs": {
+        "model": { "from": "load_model", "output": "model" },
+        "clip": { "from": "load_model", "output": "clip" },
+        "lora_name": "${lora_name}",
+        "strength_model": "${lora_strength}",
+        "strength_clip": "${lora_strength}"
+      },
+      "outputs": ["model_with_lora", "clip_with_lora"]
+    },
+    {
+      "@type": "WorkflowStep",
+      "name": "encode_positive",
+      "action": "CLIPTextEncode",
+      "inputs": {
+        "text": "${prompt}",
+        "clip": { "from": "load_lora", "output": "clip_with_lora" }
+      },
+      "outputs": ["positive_conditioning"]
+    },
+    {
+      "@type": "WorkflowStep",
+      "name": "encode_negative",
+      "action": "CLIPTextEncode",
+      "inputs": {
+        "text": "${negative_prompt}",
+        "clip": { "from": "load_lora", "output": "clip_with_lora" }
+      },
+      "outputs": ["negative_conditioning"]
+    },
+    {
+      "@type": "WorkflowStep",
+      "name": "create_latent",
+      "action": "EmptyLatentImage",
+      "inputs": {
+        "width": "${width}",
+        "height": "${height}",
+        "batch_size": 1
+      },
+      "outputs": ["latent"]
+    },
+    {
+      "@type": "WorkflowStep",
+      "name": "sample",
+      "action": "KSampler",
+      "inputs": {
+        "model": { "from": "load_lora", "output": "model_with_lora" },
+        "positive": { "from": "encode_positive", "output": "positive_conditioning" },
+        "negative": { "from": "encode_negative", "output": "negative_conditioning" },
+        "latent_image": { "from": "create_latent", "output": "latent" },
+        "seed": "${seed}",
+        "steps": "${steps}",
+        "cfg": "${cfg}",
+        "sampler_name": "euler",
+        "scheduler": "normal",
+        "denoise": 1.0
+      },
+      "outputs": ["samples"]
+    },
+    {
+      "@type": "WorkflowStep",
+      "name": "decode",
+      "action": "VAEDecode",
+      "inputs": {
+        "samples": { "from": "sample", "output": "samples" },
+        "vae": { "from": "load_model", "output": "vae" }
+      },
+      "outputs": ["image"]
+    },
+    {
+      "@type": "WorkflowStep",
+      "name": "save",
+      "action": "SaveImage",
+      "inputs": {
+        "images": { "from": "decode", "output": "image" },
+        "filename_prefix": "LoRAStyle"
+      },
+      "outputs": ["saved_path"]
+    }
+  ],
+  "parameters": {
+    "prompt": { "type": "string", "default": "styled image", "required": true },
+    "negative_prompt": { "type": "string", "default": "blurry" },
+    "lora_name": { "type": "string", "default": "anime_lineart.safetensors", "required": true },
+    "lora_strength": { "type": "float", "default": 0.8, "min": 0.0, "max": 2.0 },
+    "width": { "type": "integer", "default": 512 },
+    "height": { "type": "integer", "default": 512 },
+    "steps": { "type": "integer", "default": 20 },
+    "cfg": { "type": "float", "default": 7.0 },
+    "seed": { "type": "integer", "default": -1 }
+  }
+}

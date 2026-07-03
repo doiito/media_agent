@@ -1,0 +1,71 @@
+{
+  "@context": "https://schema.org",
+  "@type": "Workflow",
+  "name": "image_to_video_svd",
+  "description": "图生视频工作流 - 使用 SVD (Stable Video Diffusion) 从图片生成视频",
+  "version": "1.0.0",
+  "category": "video",
+  "steps": [
+    {
+      "@type": "WorkflowStep",
+      "name": "load_svd_model",
+      "action": "CheckpointLoaderSimple",
+      "inputs": {
+        "ckpt_name": "svd_xt.safetensors"
+      },
+      "outputs": ["model", "clip_vision"]
+    },
+    {
+      "@type": "WorkflowStep",
+      "name": "load_input_image",
+      "action": "LoadImage",
+      "inputs": {
+        "image": "${input_image_path}"
+      },
+      "outputs": ["input_image"]
+    },
+    {
+      "@type": "WorkflowStep",
+      "name": "encode_image",
+      "action": "CLIPVisionEncode",
+      "inputs": {
+        "image": { "from": "load_input_image", "output": "input_image" },
+        "clip_vision": { "from": "load_svd_model", "output": "clip_vision" }
+      },
+      "outputs": ["image_embedding"]
+    },
+    {
+      "@type": "WorkflowStep",
+      "name": "generate_video",
+      "action": "StableVideoDiffusion",
+      "inputs": {
+        "model": { "from": "load_svd_model", "output": "model" },
+        "image_embedding": { "from": "encode_image", "output": "image_embedding" },
+        "frames": "${num_frames}",
+        "fps": "${fps}",
+        "motion_bucket_id": "${motion_bucket_id}",
+        "noise_aug_strength": "${noise_aug_strength}"
+      },
+      "outputs": ["video_frames"]
+    },
+    {
+      "@type": "WorkflowStep",
+      "name": "save_frames",
+      "action": "SaveImageSequence",
+      "inputs": {
+        "images": { "from": "generate_video", "output": "video_frames" },
+        "output_directory": "${output_directory}",
+        "filename_prefix": "video_frame_"
+      },
+      "outputs": ["saved_paths"]
+    }
+  ],
+  "parameters": {
+    "input_image_path": { "type": "string", "required": true },
+    "output_directory": { "type": "string", "default": "output/video" },
+    "num_frames": { "type": "integer", "default": 25, "min": 1, "max": 200 },
+    "fps": { "type": "integer", "default": 8 },
+    "motion_bucket_id": { "type": "integer", "default": 127, "min": 1, "max": 255 },
+    "noise_aug_strength": { "type": "float", "default": 0.02 }
+  }
+}

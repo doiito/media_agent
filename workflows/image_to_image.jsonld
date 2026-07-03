@@ -1,0 +1,105 @@
+{
+  "@context": "https://schema.org",
+  "@type": "Workflow",
+  "name": "image_to_image",
+  "description": "图生图工作流 - 基于输入图片进行风格转换",
+  "version": "1.0.0",
+  "category": "generation",
+  "steps": [
+    {
+      "@type": "WorkflowStep",
+      "name": "load_model",
+      "action": "CheckpointLoaderSimple",
+      "inputs": {
+        "ckpt_name": "v1-5-pruned-emaonly.safetensors"
+      },
+      "outputs": ["model", "clip", "vae"]
+    },
+    {
+      "@type": "WorkflowStep",
+      "name": "load_image",
+      "action": "LoadImage",
+      "inputs": {
+        "image": "${input_image_path}"
+      },
+      "outputs": ["pixels"]
+    },
+    {
+      "@type": "WorkflowStep",
+      "name": "encode_image",
+      "action": "VAEEncode",
+      "inputs": {
+        "pixels": { "from": "load_image", "output": "pixels" },
+        "vae": { "from": "load_model", "output": "vae" }
+      },
+      "outputs": ["latent"]
+    },
+    {
+      "@type": "WorkflowStep",
+      "name": "encode_positive",
+      "action": "CLIPTextEncode",
+      "inputs": {
+        "text": "${prompt}",
+        "clip": { "from": "load_model", "output": "clip" }
+      },
+      "outputs": ["positive_conditioning"]
+    },
+    {
+      "@type": "WorkflowStep",
+      "name": "encode_negative",
+      "action": "CLIPTextEncode",
+      "inputs": {
+        "text": "${negative_prompt}",
+        "clip": { "from": "load_model", "output": "clip" }
+      },
+      "outputs": ["negative_conditioning"]
+    },
+    {
+      "@type": "WorkflowStep",
+      "name": "sample",
+      "action": "KSampler",
+      "inputs": {
+        "model": { "from": "load_model", "output": "model" },
+        "positive": { "from": "encode_positive", "output": "positive_conditioning" },
+        "negative": { "from": "encode_negative", "output": "negative_conditioning" },
+        "latent_image": { "from": "encode_image", "output": "latent" },
+        "seed": "${seed}",
+        "steps": "${steps}",
+        "cfg": "${cfg}",
+        "sampler_name": "euler",
+        "scheduler": "normal",
+        "denoise": "${denoise}"
+      },
+      "outputs": ["samples"]
+    },
+    {
+      "@type": "WorkflowStep",
+      "name": "decode",
+      "action": "VAEDecode",
+      "inputs": {
+        "samples": { "from": "sample", "output": "samples" },
+        "vae": { "from": "load_model", "output": "vae" }
+      },
+      "outputs": ["image"]
+    },
+    {
+      "@type": "WorkflowStep",
+      "name": "save",
+      "action": "SaveImage",
+      "inputs": {
+        "images": { "from": "decode", "output": "image" },
+        "filename_prefix": "I2I"
+      },
+      "outputs": ["saved_path"]
+    }
+  ],
+  "parameters": {
+    "input_image_path": { "type": "string", "required": true },
+    "prompt": { "type": "string", "default": "artistic style", "required": true },
+    "negative_prompt": { "type": "string", "default": "blurry" },
+    "steps": { "type": "integer", "default": 20 },
+    "cfg": { "type": "float", "default": 7.0 },
+    "denoise": { "type": "float", "default": 0.75, "min": 0.0, "max": 1.0 },
+    "seed": { "type": "integer", "default": -1 }
+  }
+}

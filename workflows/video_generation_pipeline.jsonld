@@ -1,0 +1,71 @@
+{
+  "@context": "https://schema.org",
+  "@type": "Workflow",
+  "name": "video_generation_pipeline",
+  "description": "复杂视频生成流水线 - 文生图 + 图片转视频 + 帧插值 + 后处理",
+  "version": "1.0.0",
+  "category": "video",
+  "stages": [
+    {
+      "@type": "WorkflowStage",
+      "name": "generate_base_image",
+      "workflow": "text_to_image_basic.jsonld",
+      "parameters": {
+        "prompt": "${base_prompt}",
+        "negative_prompt": "${negative_prompt}",
+        "width": 512,
+        "height": 512,
+        "steps": 20,
+        "seed": "${seed}"
+      },
+      "outputs": ["base_image"]
+    },
+    {
+      "@type": "WorkflowStage",
+      "name": "upscale_for_video",
+      "workflow": "upscale_image.jsonld",
+      "parameters": {
+        "input_image": { "from": "generate_base_image", "output": "base_image" },
+        "target_width": 1024,
+        "target_height": 1024
+      },
+      "outputs": ["upscaled_image"]
+    },
+    {
+      "@type": "WorkflowStage",
+      "name": "generate_video_frames",
+      "workflow": "image_to_video_svd.jsonld",
+      "parameters": {
+        "input_image": { "from": "upscale_for_video", "output": "upscaled_image" },
+        "num_frames": "${num_frames}",
+        "fps": "${fps}",
+        "motion_bucket_id": "${motion_bucket_id}"
+      },
+      "outputs": ["video_frames"]
+    },
+    {
+      "@type": "WorkflowStage",
+      "name": "interpolate_frames",
+      "workflow": "video_frame_interpolation.jsonld",
+      "parameters": {
+        "frame_directory": { "from": "generate_video_frames", "output": "video_frames" },
+        "interpolation_multiplier": "${interpolation_multiplier}"
+      },
+      "outputs": ["interpolated_frames"]
+    }
+  ],
+  "parameters": {
+    "base_prompt": { "type": "string", "required": true, "description": "Base image prompt" },
+    "negative_prompt": { "type": "string", "default": "blurry, low quality" },
+    "num_frames": { "type": "integer", "default": 25, "min": 1, "max": 100 },
+    "fps": { "type": "integer", "default": 8 },
+    "motion_bucket_id": { "type": "integer", "default": 127 },
+    "interpolation_multiplier": { "type": "integer", "default": 2 },
+    "seed": { "type": "integer", "default": -1 }
+  },
+  "output": {
+    "type": "video",
+    "format": "mp4",
+    "directory": "output/video_pipeline"
+  }
+}

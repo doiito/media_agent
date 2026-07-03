@@ -1,0 +1,112 @@
+{
+  "@context": "https://schema.org",
+  "@type": "Workflow",
+  "name": "lora_detail_enhance",
+  "description": "LoRA 细节增强工作流 - 使用 Detail Tweaker LoRA 增强图片细节",
+  "version": "1.0.0",
+  "category": "style",
+  "steps": [
+    {
+      "@type": "WorkflowStep",
+      "name": "load_model",
+      "action": "CheckpointLoaderSimple",
+      "inputs": {
+        "ckpt_name": "${model}"
+      },
+      "outputs": ["model", "clip", "vae"]
+    },
+    {
+      "@type": "WorkflowStep",
+      "name": "load_detail_lora",
+      "action": "LoraLoader",
+      "inputs": {
+        "model": { "from": "load_model", "output": "model" },
+        "clip": { "from": "load_model", "output": "clip" },
+        "lora_name": "detail_tweaker.safetensors",
+        "strength_model": "${detail_strength}",
+        "strength_clip": "${detail_strength}"
+      },
+      "outputs": ["model_detail", "clip_detail"]
+    },
+    {
+      "@type": "WorkflowStep",
+      "name": "encode_positive",
+      "action": "CLIPTextEncode",
+      "inputs": {
+        "text": "${prompt}",
+        "clip": { "from": "load_detail_lora", "output": "clip_detail" }
+      },
+      "outputs": ["positive"]
+    },
+    {
+      "@type": "WorkflowStep",
+      "name": "encode_negative",
+      "action": "CLIPTextEncode",
+      "inputs": {
+        "text": "${negative_prompt}",
+        "clip": { "from": "load_detail_lora", "output": "clip_detail" }
+      },
+      "outputs": ["negative"]
+    },
+    {
+      "@type": "WorkflowStep",
+      "name": "create_latent",
+      "action": "EmptyLatentImage",
+      "inputs": {
+        "width": "${width}",
+        "height": "${height}",
+        "batch_size": 1
+      },
+      "outputs": ["latent"]
+    },
+    {
+      "@type": "WorkflowStep",
+      "name": "sample",
+      "action": "KSampler",
+      "inputs": {
+        "model": { "from": "load_detail_lora", "output": "model_detail" },
+        "positive": { "from": "encode_positive", "output": "positive" },
+        "negative": { "from": "encode_negative", "output": "negative" },
+        "latent_image": { "from": "create_latent", "output": "latent" },
+        "seed": "${seed}",
+        "steps": "${steps}",
+        "cfg": "${cfg}",
+        "sampler_name": "dpmpp_2m",
+        "scheduler": "karras",
+        "denoise": 1.0
+      },
+      "outputs": ["samples"]
+    },
+    {
+      "@type": "WorkflowStep",
+      "name": "decode",
+      "action": "VAEDecode",
+      "inputs": {
+        "samples": { "from": "sample", "output": "samples" },
+        "vae": { "from": "load_model", "output": "vae" }
+      },
+      "outputs": ["image"]
+    },
+    {
+      "@type": "WorkflowStep",
+      "name": "save",
+      "action": "SaveImage",
+      "inputs": {
+        "images": { "from": "decode", "output": "image" },
+        "filename_prefix": "DetailEnhanced"
+      },
+      "outputs": ["saved_path"]
+    }
+  ],
+  "parameters": {
+    "prompt": { "type": "string", "default": "highly detailed masterpiece", "required": true },
+    "negative_prompt": { "type": "string", "default": "blurry, low quality" },
+    "model": { "type": "string", "default": "v1-5-pruned-emaonly.safetensors" },
+    "width": { "type": "integer", "default": 512 },
+    "height": { "type": "integer", "default": 512 },
+    "steps": { "type": "integer", "default": 25 },
+    "cfg": { "type": "float", "default": 7.0 },
+    "detail_strength": { "type": "float", "default": 0.5, "min": 0.1, "max": 1.5 },
+    "seed": { "type": "integer", "default": -1 }
+  }
+}

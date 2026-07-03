@@ -1,0 +1,57 @@
+{
+  "@context": "https://schema.org",
+  "@type": "Workflow",
+  "name": "face_restore",
+  "description": "面部修复工作流 - 使用 CodeFormer/GFPGAN 修复面部细节",
+  "version": "1.0.0",
+  "category": "postprocess",
+  "steps": [
+    {
+      "@type": "WorkflowStep",
+      "name": "load_model",
+      "action": "CheckpointLoaderSimple",
+      "inputs": {
+        "ckpt_name": "${model}"
+      },
+      "outputs": ["model", "clip", "vae"]
+    },
+    {
+      "@type": "WorkflowStep",
+      "name": "load_image",
+      "action": "LoadImage",
+      "inputs": {
+        "image": "${input_image_path}"
+      },
+      "outputs": ["input_image"]
+    },
+    {
+      "@type": "WorkflowStep",
+      "name": "restore_face",
+      "action": "FaceRestoreModel",
+      "inputs": {
+        "image": { "from": "load_image", "output": "input_image" },
+        "restore_model": "${face_restore_model}",
+        "visibility": "${visibility}",
+        "codeformer_weight": "${codeformer_weight}"
+      },
+      "outputs": ["restored_image"]
+    },
+    {
+      "@type": "WorkflowStep",
+      "name": "save",
+      "action": "SaveImage",
+      "inputs": {
+        "images": { "from": "restore_face", "output": "restored_image" },
+        "filename_prefix": "FaceRestored"
+      },
+      "outputs": ["saved_path"]
+    }
+  ],
+  "parameters": {
+    "input_image_path": { "type": "string", "required": true },
+    "model": { "type": "string", "default": "v1-5-pruned-emaonly.safetensors" },
+    "face_restore_model": { "type": "string", "default": "codeformer", "enum": ["codeformer", "gfpgan"] },
+    "visibility": { "type": "float", "default": 1.0, "min": 0.0, "max": 1.0 },
+    "codeformer_weight": { "type": "float", "default": 0.5, "min": 0.0, "max": 1.0 }
+  }
+}

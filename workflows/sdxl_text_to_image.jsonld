@@ -1,0 +1,109 @@
+{
+  "@context": "https://schema.org",
+  "@type": "Workflow",
+  "name": "sdxl_text_to_image",
+  "description": "SDXL 文生图工作流 - 高质量大尺寸图片生成",
+  "version": "1.0.0",
+  "category": "generation",
+  "model_type": "sdxl",
+  "steps": [
+    {
+      "@type": "WorkflowStep",
+      "name": "load_sdxl_model",
+      "action": "CheckpointLoaderSimple",
+      "inputs": {
+        "ckpt_name": "sdxl_base_1.0.safetensors"
+      },
+      "outputs": ["model", "clip", "vae"]
+    },
+    {
+      "@type": "WorkflowStep",
+      "name": "encode_positive_g",
+      "action": "CLIPTextEncodeSDXL",
+      "inputs": {
+        "text_g": "${prompt}",
+        "clip": { "from": "load_sdxl_model", "output": "clip" }
+      },
+      "outputs": ["positive_g"]
+    },
+    {
+      "@type": "WorkflowStep",
+      "name": "encode_positive_l",
+      "action": "CLIPTextEncodeSDXL",
+      "inputs": {
+        "text_l": "${prompt}",
+        "clip": { "from": "load_sdxl_model", "output": "clip" }
+      },
+      "outputs": ["positive_l"]
+    },
+    {
+      "@type": "WorkflowStep",
+      "name": "encode_negative",
+      "action": "CLIPTextEncodeSDXL",
+      "inputs": {
+        "text_g": "${negative_prompt}",
+        "text_l": "${negative_prompt}",
+        "clip": { "from": "load_sdxl_model", "output": "clip" }
+      },
+      "outputs": ["negative"]
+    },
+    {
+      "@type": "WorkflowStep",
+      "name": "create_latent",
+      "action": "EmptyLatentImage",
+      "inputs": {
+        "width": "${width}",
+        "height": "${height}",
+        "batch_size": 1
+      },
+      "outputs": ["latent"]
+    },
+    {
+      "@type": "WorkflowStep",
+      "name": "sample",
+      "action": "KSampler",
+      "inputs": {
+        "model": { "from": "load_sdxl_model", "output": "model" },
+        "positive": { "from": "encode_positive_g", "output": "positive_g" },
+        "negative": { "from": "encode_negative", "output": "negative" },
+        "latent_image": { "from": "create_latent", "output": "latent" },
+        "seed": "${seed}",
+        "steps": "${steps}",
+        "cfg": "${cfg}",
+        "sampler_name": "dpmpp_2m",
+        "scheduler": "karras",
+        "denoise": 1.0
+      },
+      "outputs": ["samples"]
+    },
+    {
+      "@type": "WorkflowStep",
+      "name": "decode",
+      "action": "VAEDecode",
+      "inputs": {
+        "samples": { "from": "sample", "output": "samples" },
+        "vae": { "from": "load_sdxl_model", "output": "vae" }
+      },
+      "outputs": ["image"]
+    },
+    {
+      "@type": "WorkflowStep",
+      "name": "save",
+      "action": "SaveImage",
+      "inputs": {
+        "images": { "from": "decode", "output": "image" },
+        "filename_prefix": "SDXL"
+      },
+      "outputs": ["saved_path"]
+    }
+  ],
+  "parameters": {
+    "prompt": { "type": "string", "default": "highly detailed masterpiece", "required": true },
+    "negative_prompt": { "type": "string", "default": "blurry, low quality, distorted, artifacts" },
+    "width": { "type": "integer", "default": 1024, "min": 512, "max": 2048 },
+    "height": { "type": "integer", "default": 1024, "min": 512, "max": 2048 },
+    "steps": { "type": "integer", "default": 30, "min": 10, "max": 100 },
+    "cfg": { "type": "float", "default": 7.5, "min": 1.0, "max": 20.0 },
+    "seed": { "type": "integer", "default": -1 }
+  }
+}

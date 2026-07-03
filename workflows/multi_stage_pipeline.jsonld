@@ -1,0 +1,50 @@
+{
+  "@context": "https://schema.org",
+  "@type": "Workflow",
+  "name": "multi_stage_pipeline",
+  "description": "多阶段流水线工作流 - 生成+后处理完整流程",
+  "version": "1.0.0",
+  "category": "pipeline",
+  "stages": [
+    {
+      "@type": "WorkflowStage",
+      "name": "generation",
+      "workflow": "text_to_image_basic.jsonld",
+      "parameters": {
+        "prompt": "${base_prompt}",
+        "width": 512,
+        "height": 512,
+        "steps": 20
+      },
+      "outputs": ["generated_image"]
+    },
+    {
+      "@type": "WorkflowStage",
+      "name": "upscale",
+      "workflow": "upscale_image.jsonld",
+      "parameters": {
+        "input_image": { "from": "generation", "output": "generated_image" },
+        "target_width": 1024,
+        "target_height": 1024,
+        "upscale_method": "lanczos"
+      },
+      "outputs": ["upscaled_image"]
+    },
+    {
+      "@type": "WorkflowStage",
+      "name": "refinement",
+      "workflow": "image_to_image.jsonld",
+      "parameters": {
+        "input_image": { "from": "upscale", "output": "upscaled_image" },
+        "prompt": "${refinement_prompt}",
+        "denoise": 0.3,
+        "steps": 10
+      },
+      "outputs": ["final_image"]
+    }
+  ],
+  "parameters": {
+    "base_prompt": { "type": "string", "required": true },
+    "refinement_prompt": { "type": "string", "default": "enhance details, sharpen" }
+  }
+}

@@ -1,0 +1,46 @@
+{
+  "@context": "https://schema.org",
+  "@type": "Workflow",
+  "name": "video_frame_interpolation",
+  "description": "视频帧插值工作流 - 使用 RIFE 进行帧插值提升视频流畅度",
+  "version": "1.0.0",
+  "category": "video",
+  "steps": [
+    {
+      "@type": "WorkflowStep",
+      "name": "load_frames",
+      "action": "LoadImageSequence",
+      "inputs": {
+        "directory": "${frame_directory}",
+        "pattern": "*.png"
+      },
+      "outputs": ["frames"]
+    },
+    {
+      "@type": "WorkflowStep",
+      "name": "interpolate_frames",
+      "action": "RIFEInterpolation",
+      "inputs": {
+        "frames": { "from": "load_frames", "output": "frames" },
+        "multiplier": "${interpolation_multiplier}"
+      },
+      "outputs": ["interpolated_frames"]
+    },
+    {
+      "@type": "WorkflowStep",
+      "name": "save_frames",
+      "action": "SaveImageSequence",
+      "inputs": {
+        "images": { "from": "interpolate_frames", "output": "interpolated_frames" },
+        "output_directory": "${output_directory}",
+        "filename_prefix": "interpolated_"
+      },
+      "outputs": ["saved_paths"]
+    }
+  ],
+  "parameters": {
+    "frame_directory": { "type": "string", "required": true },
+    "output_directory": { "type": "string", "default": "output/interpolated" },
+    "interpolation_multiplier": { "type": "integer", "default": 2, "min": 2, "max": 8 }
+  }
+}

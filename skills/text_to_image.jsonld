@@ -1,0 +1,40 @@
+{
+  "@context": {
+    "schema": "https://schema.org/",
+    "skill": "https://agent-harness.os/skill#"
+  },
+  "@id": "iri://skills/comfyui/text_to_image",
+  "@type": ["skill:Skill", "skill:Atomic", "iri://skill-types/ImageGeneration"],
+  "schema:name": "text_to_image",
+  "schema:description": "Generate an image from a text prompt using Stable Diffusion",
+  "skill:version": "1.0.0",
+  "skill:category": "ai",
+  "skill:securityLevel": "normal",
+  "skill:allowedRoles": ["DA"],
+  "skill:inputSchema": {
+    "type": "object",
+    "properties": {
+      "prompt": {"type": "string", "description": "Positive prompt for image generation"},
+      "negative_prompt": {"type": "string", "default": "", "description": "Negative prompt to avoid certain features"},
+      "width": {"type": "integer", "default": 1024, "description": "Image width (must be multiple of 8)"},
+      "height": {"type": "integer", "default": 1024, "description": "Image height (must be multiple of 8)"},
+      "steps": {"type": "integer", "default": 20, "description": "Sampling steps (more = better quality)"},
+      "cfg": {"type": "number", "default": 7.0, "description": "CFG scale (prompt adherence)"},
+      "seed": {"type": "integer", "default": -1, "description": "Random seed (-1 for random)"},
+      "model": {"type": "string", "default": "v1-5-pruned-emaonly.safetensors", "description": "Checkpoint model name"},
+      "sampler": {"type": "string", "default": "euler", "enum": ["euler", "euler_ancestral", "dpmpp_2m", "ddim"]},
+      "scheduler": {"type": "string", "default": "normal", "enum": ["normal", "karras", "exponential"]}
+    },
+    "required": ["prompt"]
+  },
+  "skill:outputSchema": {
+    "type": "object",
+    "properties": {
+      "image_path": {"type": "string", "description": "Output image file path"},
+      "prompt_id": {"type": "string", "description": "Execution prompt ID"},
+      "workflow": {"type": "object", "description": "Generated workflow JSON"}
+    }
+  },
+  "skill:tags": ["image", "generation", "stable-diffusion", "comfyui", "ai"],
+  "skill:dependencies": ["build_t2i_workflow", "submit_workflow"]
+}

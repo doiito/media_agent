@@ -1,0 +1,129 @@
+{
+  "@context": "https://schema.org",
+  "@type": "Workflow",
+  "name": "controlnet_lineart",
+  "description": "ControlNet Lineart 工作流 - 基于线稿生成图片",
+  "version": "1.0.0",
+  "category": "controlnet",
+  "steps": [
+    {
+      "@type": "WorkflowStep",
+      "name": "load_model",
+      "action": "CheckpointLoaderSimple",
+      "inputs": {
+        "ckpt_name": "${model}"
+      },
+      "outputs": ["model", "clip", "vae"]
+    },
+    {
+      "@type": "WorkflowStep",
+      "name": "load_controlnet",
+      "action": "ControlNetLoader",
+      "inputs": {
+        "controlnet_name": "control_v11p_sd15_lineart.safetensors"
+      },
+      "outputs": ["controlnet"]
+    },
+    {
+      "@type": "WorkflowStep",
+      "name": "load_lineart",
+      "action": "LoadImage",
+      "inputs": {
+        "image": "${lineart_image_path}"
+      },
+      "outputs": ["lineart_image"]
+    },
+    {
+      "@type": "WorkflowStep",
+      "name": "apply_controlnet",
+      "action": "ControlNetApply",
+      "inputs": {
+        "controlnet": { "from": "load_controlnet", "output": "controlnet" },
+        "image": { "from": "load_lineart", "output": "lineart_image" },
+        "strength": "${controlnet_strength}"
+      },
+      "outputs": ["conditioning"]
+    },
+    {
+      "@type": "WorkflowStep",
+      "name": "encode_positive",
+      "action": "CLIPTextEncode",
+      "inputs": {
+        "text": "${prompt}",
+        "clip": { "from": "load_model", "output": "clip" }
+      },
+      "outputs": ["positive"]
+    },
+    {
+      "@type": "WorkflowStep",
+      "name": "encode_negative",
+      "action": "CLIPTextEncode",
+      "inputs": {
+        "text": "${negative_prompt}",
+        "clip": { "from": "load_model", "output": "clip" }
+      },
+      "outputs": ["negative"]
+    },
+    {
+      "@type": "WorkflowStep",
+      "name": "create_latent",
+      "action": "EmptyLatentImage",
+      "inputs": {
+        "width": "${width}",
+        "height": "${height}",
+        "batch_size": 1
+      },
+      "outputs": ["latent"]
+    },
+    {
+      "@type": "WorkflowStep",
+      "name": "sample",
+      "action": "KSampler",
+      "inputs": {
+        "model": { "from": "load_model", "output": "model" },
+        "positive": { "from": "apply_controlnet", "output": "conditioning" },
+        "negative": { "from": "encode_negative", "output": "negative" },
+        "latent_image": { "from": "create_latent", "output": "latent" },
+        "seed": "${seed}",
+        "steps": "${steps}",
+        "cfg": "${cfg}",
+        "sampler_name": "euler",
+        "scheduler": "normal",
+        "denoise": 1.0
+      },
+      "outputs": ["samples"]
+    },
+    {
+      "@type": "WorkflowStep",
+      "name": "decode",
+      "action": "VAEDecode",
+      "inputs": {
+        "samples": { "from": "sample", "output": "samples" },
+        "vae": { "from": "load_model", "output": "vae" }
+      },
+      "outputs": ["image"]
+    },
+    {
+      "@type": "WorkflowStep",
+      "name": "save",
+      "action": "SaveImage",
+      "inputs": {
+        "images": { "from": "decode", "output": "image" },
+        "filename_prefix": "LineartCN"
+      },
+      "outputs": ["saved_path"]
+    }
+  ],
+  "parameters": {
+    "lineart_image_path": { "type": "string", "required": true },
+    "prompt": { "type": "string", "default": "colored illustration", "required": true },
+    "negative_prompt": { "type": "string", "default": "blurry, low quality" },
+    "model": { "type": "string", "default": "v1-5-pruned-emaonly.safetensors" },
+    "width": { "type": "integer", "default": 512 },
+    "height": { "type": "integer", "default": 512 },
+    "steps": { "type": "integer", "default": 20 },
+    "cfg": { "type": "float", "default": 7.0 },
+    "controlnet_strength": { "type": "float", "default": 1.0 },
+    "seed": { "type": "integer", "default": -1 }
+  }
+}

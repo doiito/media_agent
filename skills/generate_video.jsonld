@@ -1,0 +1,35 @@
+{
+  "@context": {
+    "schema": "https://schema.org/",
+    "skill": "https://agent-harness.os/skill#"
+  },
+  "@id": "iri://skills/comfyui/generate_video",
+  "@type": ["skill:Skill", "skill:Atomic", "iri://skill-types/VideoGeneration"],
+  "schema:name": "generate_video",
+  "schema:description": "Generate a video from text or image using Stable Video Diffusion",
+  "skill:version": "1.0.0",
+  "skill:category": "ai",
+  "skill:securityLevel": "normal",
+  "skill:allowedRoles": ["DA"],
+  "skill:inputSchema": {
+    "type": "object",
+    "properties": {
+      "prompt": {"type": "string", "description": "Text prompt for video generation"},
+      "image_path": {"type": "string", "description": "Optional input image for image-to-video"},
+      "frames": {"type": "integer", "default": 25, "description": "Number of frames to generate"},
+      "fps": {"type": "integer", "default": 8, "description": "Frames per second"},
+      "motion_bucket_id": {"type": "integer", "default": 127, "description": "Motion intensity (1-255)"},
+      "model": {"type": "string", "default": "svd_xt.safetensors", "description": "SVD model name"}
+    },
+    "required": ["prompt"]
+  },
+  "skill:outputSchema": {
+    "type": "object",
+    "properties": {
+      "video_path": {"type": "string", "description": "Output video file path"},
+      "prompt_id": {"type": "string"}
+    }
+  },
+  "skill:tags": ["video", "generation", "svd", "stable-diffusion", "comfyui"],
+  "skill:dependencies": ["submit_workflow"]
+}

@@ -1,0 +1,128 @@
+{
+  "@context": "https://schema.org",
+  "@type": "Workflow",
+  "name": "multi_lora_combine",
+  "description": "多 LoRA 组合工作流 - 同时应用多个 LoRA 效果",
+  "version": "1.0.0",
+  "category": "style",
+  "steps": [
+    {
+      "@type": "WorkflowStep",
+      "name": "load_model",
+      "action": "CheckpointLoaderSimple",
+      "inputs": {
+        "ckpt_name": "${model}"
+      },
+      "outputs": ["model", "clip", "vae"]
+    },
+    {
+      "@type": "WorkflowStep",
+      "name": "load_lora_1",
+      "action": "LoraLoader",
+      "inputs": {
+        "model": { "from": "load_model", "output": "model" },
+        "clip": { "from": "load_model", "output": "clip" },
+        "lora_name": "${lora_1_name}",
+        "strength_model": "${lora_1_strength}",
+        "strength_clip": "${lora_1_strength}"
+      },
+      "outputs": ["model_lora1", "clip_lora1"]
+    },
+    {
+      "@type": "WorkflowStep",
+      "name": "load_lora_2",
+      "action": "LoraLoader",
+      "inputs": {
+        "model": { "from": "load_lora_1", "output": "model_lora1" },
+        "clip": { "from": "load_lora_1", "output": "clip_lora1" },
+        "lora_name": "${lora_2_name}",
+        "strength_model": "${lora_2_strength}",
+        "strength_clip": "${lora_2_strength}"
+      },
+      "outputs": ["model_lora2", "clip_lora2"]
+    },
+    {
+      "@type": "WorkflowStep",
+      "name": "encode_positive",
+      "action": "CLIPTextEncode",
+      "inputs": {
+        "text": "${prompt}",
+        "clip": { "from": "load_lora_2", "output": "clip_lora2" }
+      },
+      "outputs": ["positive"]
+    },
+    {
+      "@type": "WorkflowStep",
+      "name": "encode_negative",
+      "action": "CLIPTextEncode",
+      "inputs": {
+        "text": "${negative_prompt}",
+        "clip": { "from": "load_lora_2", "output": "clip_lora2" }
+      },
+      "outputs": ["negative"]
+    },
+    {
+      "@type": "WorkflowStep",
+      "name": "create_latent",
+      "action": "EmptyLatentImage",
+      "inputs": {
+        "width": "${width}",
+        "height": "${height}",
+        "batch_size": 1
+      },
+      "outputs": ["latent"]
+    },
+    {
+      "@type": "WorkflowStep",
+      "name": "sample",
+      "action": "KSampler",
+      "inputs": {
+        "model": { "from": "load_lora_2", "output": "model_lora2" },
+        "positive": { "from": "encode_positive", "output": "positive" },
+        "negative": { "from": "encode_negative", "output": "negative" },
+        "latent_image": { "from": "create_latent", "output": "latent" },
+        "seed": "${seed}",
+        "steps": "${steps}",
+        "cfg": "${cfg}",
+        "sampler_name": "dpmpp_2m",
+        "scheduler": "karras",
+        "denoise": 1.0
+      },
+      "outputs": ["samples"]
+    },
+    {
+      "@type": "WorkflowStep",
+      "name": "decode",
+      "action": "VAEDecode",
+      "inputs": {
+        "samples": { "from": "sample", "output": "samples" },
+        "vae": { "from": "load_model", "output": "vae" }
+      },
+      "outputs": ["image"]
+    },
+    {
+      "@type": "WorkflowStep",
+      "name": "save",
+      "action": "SaveImage",
+      "inputs": {
+        "images": { "from": "decode", "output": "image" },
+        "filename_prefix": "MultiLoRA"
+      },
+      "outputs": ["saved_path"]
+    }
+  ],
+  "parameters": {
+    "prompt": { "type": "string", "default": "combined style", "required": true },
+    "negative_prompt": { "type": "string", "default": "blurry" },
+    "model": { "type": "string", "default": "v1-5-pruned-emaonly.safetensors" },
+    "lora_1_name": { "type": "string", "default": "detail_tweaker.safetensors" },
+    "lora_1_strength": { "type": "float", "default": 0.5 },
+    "lora_2_name": { "type": "string", "default": "pixart_style.safetensors" },
+    "lora_2_strength": { "type": "float", "default": 0.7 },
+    "width": { "type": "integer", "default": 512 },
+    "height": { "type": "integer", "default": 512 },
+    "steps": { "type": "integer", "default": 25 },
+    "cfg": { "type": "float", "default": 7.0 },
+    "seed": { "type": "integer", "default": -1 }
+  }
+}

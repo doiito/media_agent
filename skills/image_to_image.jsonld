@@ -1,0 +1,37 @@
+{
+  "@context": {
+    "schema": "https://schema.org/",
+    "skill": "https://agent-harness.os/skill#"
+  },
+  "@id": "iri://skills/comfyui/image_to_image",
+  "@type": ["skill:Skill", "skill:Atomic", "iri://skill-types/ImageTransform"],
+  "schema:name": "image_to_image",
+  "schema:description": "Transform an input image based on a text prompt using Stable Diffusion img2img",
+  "skill:version": "1.0.0",
+  "skill:category": "ai",
+  "skill:securityLevel": "normal",
+  "skill:allowedRoles": ["DA"],
+  "skill:inputSchema": {
+    "type": "object",
+    "properties": {
+      "image_path": {"type": "string", "description": "Input image file path"},
+      "prompt": {"type": "string", "description": "Positive prompt for transformation"},
+      "negative_prompt": {"type": "string", "default": "", "description": "Negative prompt"},
+      "strength": {"type": "number", "default": 0.75, "description": "Denoising strength (0.0-1.0, higher = more change)"},
+      "steps": {"type": "integer", "default": 20, "description": "Sampling steps"},
+      "cfg": {"type": "number", "default": 7.0, "description": "CFG scale"},
+      "seed": {"type": "integer", "default": -1, "description": "Random seed"},
+      "model": {"type": "string", "default": "v1-5-pruned-emaonly.safetensors"}
+    },
+    "required": ["image_path", "prompt"]
+  },
+  "skill:outputSchema": {
+    "type": "object",
+    "properties": {
+      "image_path": {"type": "string", "description": "Output image file path"},
+      "prompt_id": {"type": "string"}
+    }
+  },
+  "skill:tags": ["image", "transform", "img2img", "stable-diffusion", "comfyui"],
+  "skill:dependencies": ["build_i2i_workflow", "submit_workflow"]
+}

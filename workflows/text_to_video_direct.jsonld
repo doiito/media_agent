@@ -1,0 +1,102 @@
+{
+  "@context": "https://schema.org",
+  "@type": "Workflow",
+  "name": "text_to_video_direct",
+  "description": "直接文本转视频 - 从文本提示词直接生成视频帧序列",
+  "version": "1.0.0",
+  "category": "video",
+  "steps": [
+    {
+      "@type": "WorkflowStep",
+      "name": "load_model",
+      "action": "CheckpointLoaderSimple",
+      "inputs": {
+        "ckpt_name": "${model}"
+      },
+      "outputs": ["model", "clip", "vae"]
+    },
+    {
+      "@type": "WorkflowStep",
+      "name": "encode_prompt",
+      "action": "CLIPTextEncode",
+      "inputs": {
+        "text": "${prompt}",
+        "clip": { "from": "load_model", "output": "clip" }
+      },
+      "outputs": ["positive"]
+    },
+    {
+      "@type": "WorkflowStep",
+      "name": "encode_negative",
+      "action": "CLIPTextEncode",
+      "inputs": {
+        "text": "${negative_prompt}",
+        "clip": { "from": "load_model", "output": "clip" }
+      },
+      "outputs": ["negative"]
+    },
+    {
+      "@type": "WorkflowStep",
+      "name": "generate_latent_sequence",
+      "action": "AnimatedLatentGenerator",
+      "inputs": {
+        "width": "${width}",
+        "height": "${height}",
+        "frames": "${frames}",
+        "animation_type": "${animation_type}",
+        "motion_strength": "${motion_strength}"
+      },
+      "outputs": ["animated_latents"]
+    },
+    {
+      "@type": "WorkflowStep",
+      "name": "sample_frames",
+      "action": "AnimatedSampler",
+      "inputs": {
+        "model": { "from": "load_model", "output": "model" },
+        "positive": { "from": "encode_prompt", "output": "positive" },
+        "negative": { "from": "encode_negative", "output": "negative" },
+        "latent_frames": { "from": "generate_latent_sequence", "output": "animated_latents" },
+        "seed": "${seed}",
+        "steps": "${steps}",
+        "cfg": "${cfg}"
+      },
+      "outputs": ["sampled_frames"]
+    },
+    {
+      "@type": "WorkflowStep",
+      "name": "decode_frames",
+      "action": "BatchVAEDecode",
+      "inputs": {
+        "samples": { "from": "sample_frames", "output": "sampled_frames" },
+        "vae": { "from": "load_model", "output": "vae" }
+      },
+      "outputs": ["decoded_images"]
+    },
+    {
+      "@type": "WorkflowStep",
+      "name": "save_sequence",
+      "action": "SaveImageSequence",
+      "inputs": {
+        "images": { "from": "decode_frames", "output": "decoded_images" },
+        "output_directory": "${output_directory}",
+        "filename_prefix": "t2v_frame_"
+      },
+      "outputs": ["saved_paths"]
+    }
+  ],
+  "parameters": {
+    "prompt": { "type": "string", "required": true, "description": "Text prompt for video" },
+    "negative_prompt": { "type": "string", "default": "blurry, static, low quality" },
+    "model": { "type": "string", "default": "v1-5-pruned-emaonly.safetensors" },
+    "width": { "type": "integer", "default": 512 },
+    "height": { "type": "integer", "default": 512 },
+    "frames": { "type": "integer", "default": 16 },
+    "steps": { "type": "integer", "default": 20 },
+    "cfg": { "type": "float", "default": 7.0 },
+    "seed": { "type": "integer", "default": -1 },
+    "animation_type": { "type": "string", "default": "motion", "enum": ["motion", "zoom", "pan", "rotate"] },
+    "motion_strength": { "type": "float", "default": 0.5 },
+    "output_directory": { "type": "string", "default": "output/text_to_video" }
+  }
+}

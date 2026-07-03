@@ -1,0 +1,74 @@
+# Backend 配置文件
+# 配置 stable-diffusion.cpp 和 llama.cpp 后端
+
+# stable-diffusion.cpp 后端配置
+sd_cpp:
+  # sd-cli 可执行文件路径
+  executable_path: "/dev-data/ai-test/stable-diffusion.cpp/build/bin/sd-cli"
+  
+  # 模型文件路径（SD1.5）
+  model_path: "/dev-data/ai-test/media_agent/models/checkpoints/v1-5-pruned-emaonly.safetensors"
+  
+  # 计算后端 (cuda/vulkan/cpu)
+  # 如果没有 GPU，使用 cpu
+  backend: "cpu"
+  
+  # 精度设置 (f32/f16/q4_0/q5_0/q8_0)
+  # CPU 后端推荐 f32
+  precision: "f32"
+  
+  # Flash Attention
+  flash_attention: false
+  
+  # 是否将部分层卸载到 CPU
+  offload_to_cpu: false
+  
+  # RNG 模式 (cuda/cpu)
+  rng_mode: "cpu"
+  
+  # 超时时间（秒）- 图片生成可能需要较长时间
+  timeout_secs: 300
+  
+  # 最大重试次数
+  max_retries: 2
+  
+  # 最大并发任务
+  max_concurrent_tasks: 1
+  
+  # 队列大小
+  max_queue_size: 10
+  
+  # 健康检查间隔（秒）
+  health_check_interval: 30
+  
+  # 空闲超时（秒）
+  idle_timeout_secs: 60
+  
+  # 熔断器阈值
+  circuit_breaker_threshold: 3
+  
+  # 熔断器恢复时间（秒）
+  circuit_breaker_reset_secs: 60
+  
+  # 输出目录
+  output_dir: "/dev-data/ai-test/media_agent/output"
+
+# llama.cpp 后端配置（可选，用于 VLM）
+llama_cpp:
+  # llama-server 可执行文件路径
+  executable_path: ""
+  
+  # 模型文件路径
+  model_path: ""
+  
+  # 服务端口
+  port: 8081
+  
+  # 上下文长度
+  context_length: 4096
+  
+  # GPU 层数
+  n_gpu_layers: 0
+  
+  # 超时时间（秒）
+  timeout_secs: 120

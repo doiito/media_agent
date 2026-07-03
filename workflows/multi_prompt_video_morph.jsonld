@@ -1,0 +1,124 @@
+{
+  "@context": "https://schema.org",
+  "@type": "Workflow",
+  "name": "multi_prompt_video_morph",
+  "description": "多提示词视频变形 - 在多个提示词之间平滑过渡生成视频",
+  "version": "1.0.0",
+  "category": "video",
+  "steps": [
+    {
+      "@type": "WorkflowStep",
+      "name": "load_model",
+      "action": "CheckpointLoaderSimple",
+      "inputs": {
+        "ckpt_name": "${model}"
+      },
+      "outputs": ["model", "clip", "vae"]
+    },
+    {
+      "@type": "WorkflowStep",
+      "name": "encode_prompt_1",
+      "action": "CLIPTextEncode",
+      "inputs": {
+        "text": "${prompt_1}",
+        "clip": { "from": "load_model", "output": "clip" }
+      },
+      "outputs": ["cond_1"]
+    },
+    {
+      "@type": "WorkflowStep",
+      "name": "encode_prompt_2",
+      "action": "CLIPTextEncode",
+      "inputs": {
+        "text": "${prompt_2}",
+        "clip": { "from": "load_model", "output": "clip" }
+      },
+      "outputs": ["cond_2"]
+    },
+    {
+      "@type": "WorkflowStep",
+      "name": "encode_prompt_3",
+      "action": "CLIPTextEncode",
+      "inputs": {
+        "text": "${prompt_3}",
+        "clip": { "from": "load_model", "output": "clip" }
+      },
+      "outputs": ["cond_3"]
+    },
+    {
+      "@type": "WorkflowStep",
+      "name": "create_morph_sequence",
+      "action": "PromptMorphSequence",
+      "inputs": {
+        "conditionings": [
+          { "from": "encode_prompt_1", "output": "cond_1" },
+          { "from": "encode_prompt_2", "output": "cond_2" },
+          { "from": "encode_prompt_3", "output": "cond_3" }
+        ],
+        "morph_frames_per_transition": "${morph_frames}",
+        "transition_type": "${transition_type}"
+      },
+      "outputs": ["morph_conditionings"]
+    },
+    {
+      "@type": "WorkflowStep",
+      "name": "create_base_latent",
+      "action": "EmptyLatentImage",
+      "inputs": {
+        "width": "${width}",
+        "height": "${height}",
+        "batch_size": 1
+      },
+      "outputs": ["latent"]
+    },
+    {
+      "@type": "WorkflowStep",
+      "name": "sample_morph_sequence",
+      "action": "BatchKSampler",
+      "inputs": {
+        "model": { "from": "load_model", "output": "model" },
+        "conditionings": { "from": "create_morph_sequence", "output": "morph_conditionings" },
+        "latent_image": { "from": "create_base_latent", "output": "latent" },
+        "seed": "${seed}",
+        "steps": "${steps}",
+        "cfg": "${cfg}"
+      },
+      "outputs": ["morph_samples"]
+    },
+    {
+      "@type": "WorkflowStep",
+      "name": "decode_morph",
+      "action": "BatchVAEDecode",
+      "inputs": {
+        "samples": { "from": "sample_morph_sequence", "output": "morph_samples" },
+        "vae": { "from": "load_model", "output": "vae" }
+      },
+      "outputs": ["morph_frames"]
+    },
+    {
+      "@type": "WorkflowStep",
+      "name": "save_morph_video",
+      "action": "SaveImageSequence",
+      "inputs": {
+        "images": { "from": "decode_morph", "output": "morph_frames" },
+        "output_directory": "${output_directory}",
+        "filename_prefix": "morph_frame_"
+      },
+      "outputs": ["saved_paths"]
+    }
+  ],
+  "parameters": {
+    "prompt_1": { "type": "string", "default": "a cat", "required": true },
+    "prompt_2": { "type": "string", "default": "a dog", "required": true },
+    "prompt_3": { "type": "string", "default": "a bird", "required": true },
+    "model": { "type": "string", "default": "v1-5-pruned-emaonly.safetensors" },
+    "width": { "type": "integer", "default": 256 },
+    "height": { "type": "integer", "default": 256 },
+    "morph_frames": { "type": "integer", "default": 8 },
+    "steps": { "type": "integer", "default": 15 },
+    "cfg": { "type": "float", "default": 7.0 },
+    "seed": { "type": "integer", "default": 42 },
+    "transition_type": { "type": "string", "default": "slerp", "enum": ["slerp", "lerp", "bezier"] },
+    "output_directory": { "type": "string", "default": "output/morph_video" }
+  }
+}

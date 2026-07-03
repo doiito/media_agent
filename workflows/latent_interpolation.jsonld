@@ -1,0 +1,110 @@
+{
+  "@context": "https://schema.org",
+  "@type": "Workflow",
+  "name": "latent_interpolation",
+  "description": "Latent 插值工作流 - 在两个提示词之间平滑过渡生成图片序列",
+  "version": "1.0.0",
+  "category": "video",
+  "steps": [
+    {
+      "@type": "WorkflowStep",
+      "name": "load_model",
+      "action": "CheckpointLoaderSimple",
+      "inputs": {
+        "ckpt_name": "${model}"
+      },
+      "outputs": ["model", "clip", "vae"]
+    },
+    {
+      "@type": "WorkflowStep",
+      "name": "encode_prompt_1",
+      "action": "CLIPTextEncode",
+      "inputs": {
+        "text": "${prompt_1}",
+        "clip": { "from": "load_model", "output": "clip" }
+      },
+      "outputs": ["conditioning_1"]
+    },
+    {
+      "@type": "WorkflowStep",
+      "name": "encode_prompt_2",
+      "action": "CLIPTextEncode",
+      "inputs": {
+        "text": "${prompt_2}",
+        "clip": { "from": "load_model", "output": "clip" }
+      },
+      "outputs": ["conditioning_2"]
+    },
+    {
+      "@type": "WorkflowStep",
+      "name": "interpolate_latents",
+      "action": "LatentInterpolation",
+      "inputs": {
+        "conditioning_1": { "from": "encode_prompt_1", "output": "conditioning_1" },
+        "conditioning_2": { "from": "encode_prompt_2", "output": "conditioning_2" },
+        "num_steps": "${num_interpolation_steps}",
+        "interpolation_method": "${interpolation_method}"
+      },
+      "outputs": ["interpolated_conditionings"]
+    },
+    {
+      "@type": "WorkflowStep",
+      "name": "create_base_latent",
+      "action": "EmptyLatentImage",
+      "inputs": {
+        "width": "${width}",
+        "height": "${height}",
+        "batch_size": 1
+      },
+      "outputs": ["latent"]
+    },
+    {
+      "@type": "WorkflowStep",
+      "name": "sample_sequence",
+      "action": "BatchKSampler",
+      "inputs": {
+        "model": { "from": "load_model", "output": "model" },
+        "conditionings": { "from": "interpolate_latents", "output": "interpolated_conditionings" },
+        "latent_image": { "from": "create_base_latent", "output": "latent" },
+        "seed": "${seed}",
+        "steps": "${steps}",
+        "cfg": "${cfg}"
+      },
+      "outputs": ["samples_sequence"]
+    },
+    {
+      "@type": "WorkflowStep",
+      "name": "decode_sequence",
+      "action": "VAEDecodeBatch",
+      "inputs": {
+        "samples": { "from": "sample_sequence", "output": "samples_sequence" },
+        "vae": { "from": "load_model", "output": "vae" }
+      },
+      "outputs": ["images_sequence"]
+    },
+    {
+      "@type": "WorkflowStep",
+      "name": "save_sequence",
+      "action": "SaveImageSequence",
+      "inputs": {
+        "images": { "from": "decode_sequence", "output": "images_sequence" },
+        "output_directory": "${output_directory}",
+        "filename_prefix": "interpolation_"
+      },
+      "outputs": ["saved_paths"]
+    }
+  ],
+  "parameters": {
+    "prompt_1": { "type": "string", "default": "a cat", "required": true },
+    "prompt_2": { "type": "string", "default": "a dog", "required": true },
+    "model": { "type": "string", "default": "v1-5-pruned-emaonly.safetensors" },
+    "width": { "type": "integer", "default": 256 },
+    "height": { "type": "integer", "default": 256 },
+    "num_interpolation_steps": { "type": "integer", "default": 10 },
+    "interpolation_method": { "type": "string", "default": "slerp", "enum": ["slerp", "lerp"] },
+    "steps": { "type": "integer", "default": 15 },
+    "cfg": { "type": "float", "default": 7.0 },
+    "seed": { "type": "integer", "default": 42 },
+    "output_directory": { "type": "string", "default": "output/interpolation" }
+  }
+}
