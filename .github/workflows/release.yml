@@ -1,0 +1,108 @@
+name: Build and Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            use_zigbuild: false
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            use_zigbuild: false
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            use_zigbuild: false
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Cache Cargo artifacts
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install protoc
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update && sudo apt-get install -y protobuf-compiler
+          echo "PROTOC=$(which protoc)" >> $GITHUB_ENV
+
+      - name: Install protoc (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          brew install protobuf
+          echo "PROTOC=$(which protoc)" >> $GITHUB_ENV
+
+      - name: Install protoc (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $url = "https://github.com/protocolbuffers/protobuf/releases/download/v28.2/protoc-28.2-win64.zip"
+          $zip = "${env:TEMP}\protoc.zip"
+          $dest = "${env:TEMP}\protoc"
+          Invoke-WebRequest -Uri $url -OutFile $zip -UseBasicParsing
+          Expand-Archive -Path $zip -DestinationPath $dest -Force
+          echo "$dest\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          echo "PROTOC=$dest\bin\protoc.exe" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          & "$dest\bin\protoc.exe" --version
+
+      - name: Build
+        run: cargo build --release --target ${{ matrix.target }}
+
+      - name: Package (Linux/macOS)
+        if: runner.os != 'Windows'
+        working-directory: target/${{ matrix.target }}/release
+        run: |
+          tar czvf ${{ github.workspace }}/comfyui-server-${{ matrix.target }}.tar.gz comfyui-server
+          tar czvf ${{ github.workspace }}/comfyui-cli-${{ matrix.target }}.tar.gz comfyui-cli
+
+      - name: Package (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        working-directory: target/${{ matrix.target }}/release
+        run: |
+          Compress-Archive -Path comfyui-server.exe -DestinationPath ${{ github.workspace }}/comfyui-server-${{ matrix.target }}.zip
+          Compress-Archive -Path comfyui-cli.exe -DestinationPath ${{ github.workspace }}/comfyui-cli-${{ matrix.target }}.zip
+
+      - name: Upload Artifacts (manual run)
+        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: binaries-${{ matrix.target }}
+          path: |
+            comfyui-server-${{ matrix.target }}.tar.gz
+            comfyui-cli-${{ matrix.target }}.tar.gz
+            comfyui-server-${{ matrix.target }}.zip
+            comfyui-cli-${{ matrix.target }}.zip
+
+      - name: Upload to Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            comfyui-server-${{ matrix.target }}.tar.gz
+            comfyui-cli-${{ matrix.target }}.tar.gz
+            comfyui-server-${{ matrix.target }}.zip
+            comfyui-cli-${{ matrix.target }}.zip
+          fail_on_unmatched_files: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

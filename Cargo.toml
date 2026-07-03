@@ -71,7 +71,7 @@ rayon = "1"
 clap = { version = "4", features = ["derive"] }
 
 # gliding_horse Agent OS（本地路径依赖）
-glidinghorse = { path = "../gliding_horse" }
+glidinghorse = { path = "deps/gliding_horse" }
 
 [dev-dependencies]
 tokio-test = "0.4"

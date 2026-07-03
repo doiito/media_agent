@@ -1,0 +1,3 @@
+[submodule "deps/gliding_horse"]
+	path = deps/gliding_horse
+	url = https://github.com/doiito/gliding_horse.git
