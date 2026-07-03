@@ -1,0 +1,157 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Acting Agent Output Schema",
+  "description": "AA 决策输出的 JSON Schema 验证",
+  "type": "object",
+  "required": ["decision", "reason", "iteration_count", "max_iterations"],
+  "properties": {
+    "decision": {
+      "type": "string",
+      "enum": ["accept", "retry", "abandon"]
+    },
+    "reason": {
+      "type": "string",
+      "minLength": 1
+    },
+    "iteration_count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "max_iterations": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 10
+    },
+    "final_result": {
+      "type": "object",
+      "required": ["accepted"],
+      "properties": {
+        "accepted": { "type": "boolean" },
+        "output_paths": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "quality_score": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 50
+        },
+        "quality_level": {
+          "type": "string",
+          "enum": ["fast", "standard", "high", "ultra"]
+        }
+      }
+    },
+    "retry_plan": {
+      "type": "object",
+      "required": ["needed"],
+      "properties": {
+        "needed": { "type": "boolean" },
+        "adjustments": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["parameter", "old_value", "new_value"],
+            "properties": {
+              "parameter": { "type": "string" },
+              "old_value": { "type": "string" },
+              "new_value": { "type": "string" },
+              "expected_improvement": { "type": "string" }
+            }
+          }
+        },
+        "workflow_changes": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "estimated_retry_time": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "user_summary": {
+      "type": "object",
+      "required": ["title", "status", "description"],
+      "properties": {
+        "title": { "type": "string" },
+        "status": {
+          "type": "string",
+          "enum": ["成功", "部分成功", "失败", "success", "partial", "failed"]
+        },
+        "description": { "type": "string" },
+        "outputs": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["type", "path"],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": ["image", "video"]
+              },
+              "path": { "type": "string" },
+              "preview_url": { "type": "string" },
+              "specs": {
+                "type": "object",
+                "properties": {
+                  "resolution": { "type": "string" },
+                  "format": { "type": "string" },
+                  "duration": { "type": "string" }
+                }
+              }
+            }
+          }
+        },
+        "generation_details": {
+          "type": "object",
+          "properties": {
+            "model_used": { "type": "string" },
+            "total_steps": { "type": "integer" },
+            "generation_time": { "type": "integer" },
+            "iterations": { "type": "integer" }
+          }
+        },
+        "quality_notes": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "suggestions": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    },
+    "next_actions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["action"],
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": ["save_result", "notify_user", "cleanup", "continue_iteration"]
+          },
+          "description": { "type": "string" }
+        }
+      }
+    },
+    "learned_experience": {
+      "type": "object",
+      "properties": {
+        "successful_parameters": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "failed_attempts": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "recommendations_for_future": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    }
+  }
+}

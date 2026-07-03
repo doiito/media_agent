@@ -200,10 +200,12 @@ impl AgentMemory {
             ts = timestamp
         );
 
-        // 写入 Blackboard（通过 SPARQL INSERT 或 load_ttl）
-        // 注：具体 API 需根据 gliding_horse Blackboard 实现
-        // 当前版本 Blackboard 支持 load_ttl 或 SPARQL query
-        // TODO: 实现具体写入逻辑（需要 gliding_horse 编译后确认 API）
+        // 写入 Blackboard（通过 write_node）
+        // 使用 gliding_horse Blackboard 的 write_node 方法
+        let node_iri = format!("iri://generation/{}", prompt_id);
+        let config = glidinghorse::core::CoreConfig::default();
+        self.blackboard.write_node(&node_iri, &turtle, &config)
+            .map_err(|e| format!("Failed to write to Blackboard: {}", e))?;
 
         log::info!("Recording generation: prompt_id={}, output={}", prompt_id, output_path);
         Ok(())
@@ -243,9 +245,22 @@ impl AgentMemory {
             )
         };
 
-        // TODO: 实现具体查询逻辑（需要 gliding_horse 编译后确认 API）
+        // 使用 gliding_horse Blackboard 的 SPARQL 查询
+        let results = self.blackboard.query(&sparql)
+            .map_err(|e| format!("SPARQL query failed: {}", e))?;
 
-        Ok(vec![])
+        // 解析 SPARQL 结果
+        let records: Vec<GenerationRecord> = results.iter()
+            .filter_map(|binding| {
+                let gen_iri = binding.get("gen").and_then(|v| v.as_str())?;
+                let prompt = binding.get("prompt").and_then(|v| v.as_str())?;
+                let output = binding.get("output").and_then(|v| v.as_str())?;
+                let ts = binding.get("ts").and_then(|v| v.as_str())?;
+                Some(GenerationRecord::from_rdf(gen_iri, prompt, output, ts))
+            })
+            .collect();
+
+        Ok(records)
     }
 
     /// 记录用户偏好到 L0（持久化）
@@ -254,17 +269,22 @@ impl AgentMemory {
         key: &str,
         value: &str,
     ) -> Result<(), String> {
-        // L0 是 redb KV 存储，直接写入
-        // TODO: 实现具体写入逻辑
-        
+        // L0 是 redb KV 存储，使用 store 方法写入
+        let iri = format!("iri://preference/{}", key);
+        self.l0.store(&iri, value)
+            .map_err(|e| format!("Failed to write to L0: {}", e))?;
+
         log::info!("Recording preference: {}={}", key, value);
         Ok(())
     }
 
     /// 获取用户偏好
     pub async fn get_preference(&self, key: &str) -> Option<String> {
-        // TODO: 实现具体读取逻辑
-        None
+        let iri = format!("iri://preference/{}", key);
+        self.l0.retrieve(&iri)
+            .ok()
+            .flatten()
+            .map(|entry| entry.content)
     }
 }
 

@@ -6,6 +6,7 @@ pub mod context;
 pub mod memory;
 pub mod engine;
 pub mod tools;
+pub mod smart_tools;
 pub mod skills;
 pub mod workflow;
 pub mod handlers;

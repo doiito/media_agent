@@ -1,0 +1,128 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Checking Agent Output Schema",
+  "description": "CA 检查输出的 JSON Schema 验证",
+  "type": "object",
+  "required": ["status", "overall_score", "quality_dimensions", "output_validation"],
+  "properties": {
+    "status": {
+      "type": "string",
+      "enum": ["pass", "fail", "needs_improvement"]
+    },
+    "overall_score": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 50
+    },
+    "quality_dimensions": {
+      "type": "object",
+      "required": ["clarity", "color", "composition", "prompt_response", "overall_satisfaction"],
+      "properties": {
+        "clarity": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 10
+        },
+        "color": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 10
+        },
+        "composition": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 10
+        },
+        "prompt_response": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 10
+        },
+        "overall_satisfaction": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 10
+        }
+      }
+    },
+    "output_validation": {
+      "type": "object",
+      "required": ["exists", "format_correct", "resolution_met", "file_complete"],
+      "properties": {
+        "exists": { "type": "boolean" },
+        "format_correct": { "type": "boolean" },
+        "resolution_met": { "type": "boolean" },
+        "file_complete": { "type": "boolean" }
+      }
+    },
+    "content_check": {
+      "type": "object",
+      "properties": {
+        "main_subject_present": { "type": "boolean" },
+        "style_matched": { "type": "boolean" },
+        "key_elements_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "unexpected_elements": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    },
+    "issues_found": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["type", "severity", "description"],
+        "properties": {
+          "type": { "type": "string" },
+          "severity": {
+            "type": "string",
+            "enum": ["minor", "moderate", "major"]
+          },
+          "location": { "type": "string" },
+          "description": { "type": "string" },
+          "suggestion": { "type": "string" }
+        }
+      }
+    },
+    "improvement_recommendations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["action", "reason"],
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": ["adjust_parameter", "change_model", "modify_prompt", "add_processing"]
+          },
+          "parameter": { "type": "string" },
+          "current_value": { "type": "string" },
+          "recommended_value": { "type": "string" },
+          "reason": { "type": "string" }
+        }
+      }
+    },
+    "needs_regeneration": {
+      "type": "boolean"
+    },
+    "regeneration_suggestions": {
+      "type": "object",
+      "properties": {
+        "workflow_adjustments": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "parameter_changes": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "model_alternatives": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    }
+  }
+}

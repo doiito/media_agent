@@ -1,0 +1,125 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Planning Agent Output Schema",
+  "description": "PA 规划输出的 JSON Schema 验证",
+  "type": "object",
+  "required": ["intent", "workflow", "parameters", "models"],
+  "properties": {
+    "intent": {
+      "type": "object",
+      "required": ["type", "description"],
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": ["text_to_image", "image_to_image", "video_generation", "inpainting", "upscale", "batch_generate", "controlnet", "lora_enhance"]
+        },
+        "description": {
+          "type": "string",
+          "minLength": 1
+        },
+        "style_keywords": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    },
+    "workflow": {
+      "type": "object",
+      "required": ["template", "reason"],
+      "properties": {
+        "template": {
+          "type": "string",
+          "pattern": ".+\\.jsonld$"
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "parameters": {
+      "type": "object",
+      "required": ["prompt", "width", "height", "steps", "cfg"],
+      "properties": {
+        "prompt": {
+          "type": "string",
+          "minLength": 1
+        },
+        "negative_prompt": {
+          "type": "string"
+        },
+        "width": {
+          "type": "integer",
+          "minimum": 64,
+          "maximum": 2048
+        },
+        "height": {
+          "type": "integer",
+          "minimum": 64,
+          "maximum": 2048
+        },
+        "steps": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100
+        },
+        "cfg": {
+          "type": "number",
+          "minimum": 1.0,
+          "maximum": 30.0
+        },
+        "seed": {
+          "type": "integer",
+          "minimum": -1
+        },
+        "sampler_name": {
+          "type": "string",
+          "enum": ["euler", "euler_a", "dpmpp_2m", "dpmpp_sde", "ddim", "lcm", "uni_pc"]
+        },
+        "scheduler": {
+          "type": "string",
+          "enum": ["normal", "karras", "exponential", "sgm_uniform", "simple", "ddim_uniform"]
+        }
+      }
+    },
+    "models": {
+      "type": "object",
+      "required": ["checkpoint"],
+      "properties": {
+        "checkpoint": {
+          "type": "string",
+          "pattern": ".+\\.safetensors$"
+        },
+        "lora": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "controlnet": {
+          "type": "string"
+        },
+        "vae": {
+          "type": "string"
+        }
+      }
+    },
+    "estimated_time": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "quality_level": {
+      "type": "string",
+      "enum": ["fast", "standard", "high", "ultra"]
+    },
+    "alternatives": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["template", "reason"],
+        "properties": {
+          "template": { "type": "string" },
+          "reason": { "type": "string" }
+        }
+      }
+    }
+  }
+}

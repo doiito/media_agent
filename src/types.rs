@@ -113,6 +113,30 @@ pub enum Value {
 }
 
 impl Value {
+    /// 从 serde_json::Value 创建
+    pub fn from_json(json: serde_json::Value) -> Self {
+        match json {
+            serde_json::Value::String(s) => Value::String(s),
+            serde_json::Value::Number(n) => {
+                if n.is_i64() {
+                    Value::Int(n.as_i64().unwrap())
+                } else {
+                    Value::Float(n.as_f64().unwrap_or(0.0))
+                }
+            }
+            serde_json::Value::Bool(b) => Value::Bool(b),
+            serde_json::Value::Array(arr) => {
+                Value::Array(arr.into_iter().map(Value::from_json).collect())
+            }
+            serde_json::Value::Object(obj) => {
+                Value::Object(obj.into_iter()
+                    .map(|(k, v)| (k, Value::from_json(v)))
+                    .collect())
+            }
+            serde_json::Value::Null => Value::String("null".to_string()),
+        }
+    }
+    
     pub fn as_str(&self) -> Result<&str, Error> {
         match self {
             Value::String(s) => Ok(s),

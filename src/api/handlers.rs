@@ -119,10 +119,9 @@ pub async fn system_stats(State(state): State<ApiState>) -> impl IntoResponse {
 /// GET /stats - 服务器统计
 pub async fn get_stats(State(state): State<ApiState>) -> impl IntoResponse {
     let stats = state.stats.read().await;
-    let queue_size = {
-        let engine = state.engine.lock().await;
-        0 // 简化实现
-    };
+    // 队列大小：当前没有独立队列系统，返回 0
+    // 后续可通过 ExecutionEngine.queue_size() 获取
+    let queue_size = 0;
 
     let response = StatsResponse {
         server_uptime: state.start_time.elapsed().as_secs(),
@@ -613,15 +612,68 @@ pub async fn upload_image(
 // ============================================================================
 
 /// 获取系统总内存（字节）
+/// Linux: 读取 /proc/meminfo
 fn get_total_memory() -> u64 {
-    // 简化实现，实际应读取/proc/meminfo
-    16 * 1024 * 1024 * 1024 // 16GB 默认值
+    #[cfg(target_os = "linux")]
+    {
+        if let Ok(content) = std::fs::read_to_string("/proc/meminfo") {
+            for line in content.lines() {
+                if line.starts_with("MemTotal:") {
+                    let parts: Vec<&str> = line.split_whitespace().collect();
+                    if parts.len() >= 2 {
+                        let kb: u64 = parts[1].parse().unwrap_or(0);
+                        return kb * 1024;
+                    }
+                }
+            }
+        }
+    }
+    // 默认值
+    16 * 1024 * 1024 * 1024
 }
 
 /// 获取系统可用内存（字节）
+/// Linux: 读取 /proc/meminfo
 fn get_free_memory() -> u64 {
-    // 简化实现，实际应读取/proc/meminfo
-    8 * 1024 * 1024 * 1024 // 8GB 默认值
+    #[cfg(target_os = "linux")]
+    {
+        if let Ok(content) = std::fs::read_to_string("/proc/meminfo") {
+            for line in content.lines() {
+                if line.starts_with("MemAvailable:") {
+                    let parts: Vec<&str> = line.split_whitespace().collect();
+                    if parts.len() >= 2 {
+                        let kb: u64 = parts[1].parse().unwrap_or(0);
+                        return kb * 1024;
+                    }
+                }
+            }
+            // 如果 MemAvailable 不存在，使用 MemFree + Buffers + Cached
+            let mut mem_free = 0u64;
+            let mut buffers = 0u64;
+            let mut cached = 0u64;
+            for line in content.lines() {
+                if line.starts_with("MemFree:") {
+                    let parts: Vec<&str> = line.split_whitespace().collect();
+                    if parts.len() >= 2 {
+                        mem_free = parts[1].parse().unwrap_or(0) * 1024;
+                    }
+                } else if line.starts_with("Buffers:") {
+                    let parts: Vec<&str> = line.split_whitespace().collect();
+                    if parts.len() >= 2 {
+                        buffers = parts[1].parse().unwrap_or(0) * 1024;
+                    }
+                } else if line.starts_with("Cached:") {
+                    let parts: Vec<&str> = line.split_whitespace().collect();
+                    if parts.len() >= 2 {
+                        cached = parts[1].parse().unwrap_or(0) * 1024;
+                    }
+                }
+            }
+            return mem_free + buffers + cached;
+        }
+    }
+    // 默认值
+    8 * 1024 * 1024 * 1024
 }
 
 // ============================================================================

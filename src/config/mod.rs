@@ -160,6 +160,22 @@ pub struct PathsConfig {
     /// 临时目录
     #[serde(default = "default_temp_dir")]
     pub temp_dir: String,
+
+    /// 提示词模板目录
+    #[serde(default = "default_prompts_dir")]
+    pub prompts_dir: String,
+
+    /// Schema 目录
+    #[serde(default = "default_schemas_dir")]
+    pub schemas_dir: String,
+
+    /// 工作流模板目录
+    #[serde(default = "default_workflows_dir")]
+    pub workflows_dir: String,
+
+    /// 技能定义目录
+    #[serde(default = "default_skills_dir")]
+    pub skills_dir: String,
 }
 
 impl Default for PathsConfig {
@@ -168,6 +184,10 @@ impl Default for PathsConfig {
             models_dir: default_models_dir(),
             input_dir: default_input_dir(),
             temp_dir: default_temp_dir(),
+            prompts_dir: default_prompts_dir(),
+            schemas_dir: default_schemas_dir(),
+            workflows_dir: default_workflows_dir(),
+            skills_dir: default_skills_dir(),
         }
     }
 }
@@ -233,6 +253,22 @@ fn default_input_dir() -> String {
 
 fn default_temp_dir() -> String {
     std::env::var("TMPDIR").unwrap_or_else(|_| "/tmp".to_string())
+}
+
+fn default_prompts_dir() -> String {
+    std::env::var("PROMPTS_DIR").unwrap_or_else(|_| "prompts".to_string())
+}
+
+fn default_schemas_dir() -> String {
+    std::env::var("SCHEMAS_DIR").unwrap_or_else(|_| "schemas".to_string())
+}
+
+fn default_workflows_dir() -> String {
+    std::env::var("WORKFLOWS_DIR").unwrap_or_else(|_| "workflows".to_string())
+}
+
+fn default_skills_dir() -> String {
+    std::env::var("SKILLS_DIR").unwrap_or_else(|_| "skills".to_string())
 }
 
 fn default_true() -> bool {
@@ -322,6 +358,10 @@ impl AppConfig {
             &self.paths.models_dir,
             &self.paths.input_dir,
             &self.paths.temp_dir,
+            &self.paths.prompts_dir,
+            &self.paths.schemas_dir,
+            &self.paths.workflows_dir,
+            &self.paths.skills_dir,
         ];
 
         for dir in &dirs {
@@ -345,6 +385,15 @@ impl AppConfig {
         ];
         for sub in &model_subdirs {
             let path = PathBuf::from(&self.paths.models_dir).join(sub);
+            std::fs::create_dir_all(&path).map_err(|e| {
+                ConfigError::DirectoryCreateError(format!("{:?}: {}", path, e))
+            })?;
+        }
+
+        // 创建提示词子目录（PA/DA/CA/AA/SA 角色）
+        let prompt_subdirs = ["pa", "da", "ca", "aa", "sa"];
+        for sub in &prompt_subdirs {
+            let path = PathBuf::from(&self.paths.prompts_dir).join(sub);
             std::fs::create_dir_all(&path).map_err(|e| {
                 ConfigError::DirectoryCreateError(format!("{:?}: {}", path, e))
             })?;

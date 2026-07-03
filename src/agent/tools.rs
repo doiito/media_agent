@@ -7,8 +7,20 @@ use crate::agent::context::AgentContext;
 use crate::types::Workflow;
 use crate::workflow::builder::WorkflowBuilder;
 
-/// 注册 ComfyUI 工具到 ToolExecutor
+/// 注册所有 ComfyUI 工具（基础 + 智能）
 pub fn register_comfyui_tools(
+    executor: &mut glidinghorse::tools::tool_executor::ToolExecutor,
+    ctx: Arc<AgentContext>,
+) {
+    // 先注册基础工具
+    register_basic_tools(executor, ctx.clone());
+    
+    // 再注册智能工作流工具
+    crate::agent::smart_tools::register_smart_workflow_tools(executor, ctx);
+}
+
+/// 注册基础工具（submit_workflow, build_t2i, build_i2i 等）
+fn register_basic_tools(
     executor: &mut glidinghorse::tools::tool_executor::ToolExecutor,
     ctx: Arc<AgentContext>,
 ) {
@@ -164,18 +176,57 @@ pub fn register_comfyui_tools(
                         .and_then(|v| v.as_str())
                         .ok_or_else(|| "Missing prompt parameter".to_string())?;
 
+                    let negative_prompt = input.get("negative_prompt")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("");
+
                     let strength = input.get("strength")
                         .and_then(|v| v.as_f64())
-                        .unwrap_or(0.75);
+                        .unwrap_or(0.75) as f32;
 
                     let steps = input.get("steps")
                         .and_then(|v| v.as_u64())
                         .unwrap_or(20) as usize;
 
+                    let cfg = input.get("cfg")
+                        .and_then(|v| v.as_f64())
+                        .unwrap_or(7.0) as f32;
+
+                    let seed = input.get("seed")
+                        .and_then(|v| v.as_i64())
+                        .unwrap_or(-1);
+                    let seed = if seed < 0 { rand::random::<usize>() } else { seed as usize };
+
+                    let model = input.get("model")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("v1-5-pruned-emaonly.safetensors");
+
+                    // 构建 image-to-image 工作流
+                    let workflow = WorkflowBuilder::image_to_image(
+                        prompt.to_string(),
+                        negative_prompt.to_string(),
+                        image_path.to_string(),
+                        strength,
+                        steps,
+                        cfg,
+                        seed,
+                        model.to_string(),
+                    ).map_err(|e| format!("Failed to build I2I workflow: {}", e))?;
+
+                    let workflow_json = serde_json::to_value(&workflow)
+                        .map_err(|e| format!("Failed to serialize workflow: {}", e))?;
+
                     Ok(json!({
-                        "workflow": {"nodes": {}, "links": []},
-                        "message": "image_to_image workflow builder placeholder",
-                        "params": { "image_path": image_path, "prompt": prompt, "strength": strength, "steps": steps }
+                        "workflow": workflow_json,
+                        "node_count": workflow.nodes.len(),
+                        "params": {
+                            "image_path": image_path,
+                            "prompt": prompt,
+                            "strength": strength,
+                            "steps": steps,
+                            "cfg": cfg,
+                            "seed": seed
+                        }
                     }))
                 })
             }

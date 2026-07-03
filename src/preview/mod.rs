@@ -199,7 +199,7 @@ impl PreviewManager {
 
         let should_publish = {
             let sessions = self.sessions.read().await;
-            if let Some(session) = sessions.get(prompt_id) {
+            if sessions.contains_key(prompt_id) {
                 // 按步数间隔过滤
                 step % self.config.step_interval == 0 || step == max
             } else {

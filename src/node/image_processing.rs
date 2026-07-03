@@ -1,11 +1,13 @@
 // 图片处理节点
 // 包括 ImageBlend、ImageCrop、ImageRotate、ImageColorAdjust、ImageFilter 等
+// 使用 image crate 进行图像处理
 
 use crate::types::*;
 use crate::node::{Node, InputType, OutputType};
 use async_trait::async_trait;
 use std::collections::HashMap;
 use log::debug;
+use image::{ImageBuffer, Rgb, DynamicImage, GenericImageView};
 
 // ============================================================================
 // ImageBlend 节点 - 混合两张图片
@@ -525,7 +527,7 @@ impl Node for ImageFilterNode {
             .unwrap_or("gaussian_blur");
         let radius = inputs.get("radius")
             .unwrap_or(&Value::Int(1))
-            .as_int()? as usize;
+            .as_int()? as f32;
         let strength = inputs.get("strength")
             .unwrap_or(&Value::Float(1.0))
             .as_float()? as f32;
@@ -534,169 +536,62 @@ impl Node for ImageFilterNode {
 
         let filtered = match image {
             Value::Image(data) => {
-                // 简化的滤镜实现（实际应使用 image crate 或 OpenCV）
+                // 从 RGB 数据创建 image buffer
                 let src_size = (data.len() as f64 / 3.0).sqrt() as usize;
-                let mut result = data.clone();
-
-                match filter_type {
+                let width = src_size;
+                let height = src_size;
+                
+                // 将 Vec<u8> 转换为 ImageBuffer
+                let img_buffer: ImageBuffer<Rgb<u8>, Vec<u8>> = 
+                    ImageBuffer::from_raw(width as u32, height as u32, data.clone())
+                        .ok_or_else(|| Error::ExecutionFailed("Failed to create image buffer".to_string()))?;
+                
+                let dynamic_img = DynamicImage::from(img_buffer);
+                
+                // 使用 image crate 进行滤镜处理
+                let result_img = match filter_type {
                     "gaussian_blur" | "box_blur" => {
-                        // 简单的盒模糊
-                        let r = radius.max(1);
-                        let mut i = 0;
-                        while i + 2 < data.len() {
-                            let pixel_idx = i / 3;
-                            let x = pixel_idx % src_size;
-                            let y = pixel_idx / src_size;
-
-                            let mut sum_r = 0u32;
-                            let mut sum_g = 0u32;
-                            let mut sum_b = 0u32;
-                            let mut count = 0u32;
-
-                            for dy in 0..=(2 * r) {
-                                for dx in 0..=(2 * r) {
-                                    let nx = x as isize + dx as isize - r as isize;
-                                    let ny = y as isize + dy as isize - r as isize;
-                                    if nx >= 0 && nx < src_size as isize && ny >= 0 && ny < src_size as isize {
-                                        let nidx = ((ny as usize) * src_size + (nx as usize)) * 3;
-                                        if nidx + 2 < data.len() {
-                                            sum_r += data[nidx] as u32;
-                                            sum_g += data[nidx + 1] as u32;
-                                            sum_b += data[nidx + 2] as u32;
-                                            count += 1;
-                                        }
-                                    }
-                                }
-                            }
-
-                            if count > 0 {
-                                result[i] = ((sum_r as f32 / count as f32) * strength
-                                    + data[i] as f32 * (1.0 - strength)).clamp(0.0, 255.0) as u8;
-                                result[i + 1] = ((sum_g as f32 / count as f32) * strength
-                                    + data[i + 1] as f32 * (1.0 - strength)).clamp(0.0, 255.0) as u8;
-                                result[i + 2] = ((sum_b as f32 / count as f32) * strength
-                                    + data[i + 2] as f32 * (1.0 - strength)).clamp(0.0, 255.0) as u8;
-                            }
-                            i += 3;
+                        // 高斯模糊/盒模糊 - 使用 image crate 的 blur
+                        let blurred = dynamic_img.blur(radius);
+                        if strength < 1.0 {
+                            blend_images(&dynamic_img, &blurred, strength)
+                        } else {
+                            blurred
                         }
                     }
                     "sharpen" => {
-                        // 锐化：result = original + (original - blurred) * strength
-                        let mut i = 0;
-                        while i + 2 < data.len() {
-                            let pixel_idx = i / 3;
-                            let x = pixel_idx % src_size;
-                            let y = pixel_idx / src_size;
-
-                            let mut sum_r = 0u32;
-                            let mut sum_g = 0u32;
-                            let mut sum_b = 0u32;
-                            let mut count = 0u32;
-
-                            for &dy in &[-1i32, 0, 1] {
-                                for &dx in &[-1i32, 0, 1] {
-                                    if dx == 0 && dy == 0 { continue; }
-                                    let nx = x as isize + dx as isize;
-                                    let ny = y as isize + dy as isize;
-                                    if nx >= 0 && nx < src_size as isize && ny >= 0 && ny < src_size as isize {
-                                        let nidx = ((ny as usize) * src_size + (nx as usize)) * 3;
-                                        if nidx + 2 < data.len() {
-                                            sum_r += data[nidx] as u32;
-                                            sum_g += data[nidx + 1] as u32;
-                                            sum_b += data[nidx + 2] as u32;
-                                            count += 1;
-                                        }
-                                    }
-                                }
-                            }
-
-                            if count > 0 {
-                                let blurred_r = sum_r as f32 / count as f32;
-                                let blurred_g = sum_g as f32 / count as f32;
-                                let blurred_b = sum_b as f32 / count as f32;
-                                let orig_r = data[i] as f32;
-                                let orig_g = data[i + 1] as f32;
-                                let orig_b = data[i + 2] as f32;
-                                result[i] = (orig_r + (orig_r - blurred_r) * strength).clamp(0.0, 255.0) as u8;
-                                result[i + 1] = (orig_g + (orig_g - blurred_g) * strength).clamp(0.0, 255.0) as u8;
-                                result[i + 2] = (orig_b + (orig_b - blurred_b) * strength).clamp(0.0, 255.0) as u8;
-                            }
-                            i += 3;
-                        }
+                        // 锐化 - 先模糊，然后 original + (original - blurred) * strength
+                        let blurred = dynamic_img.blur(radius);
+                        sharpen_image(&dynamic_img, &blurred, strength)
                     }
                     "edge_detect" => {
-                        // 简单的边缘检测（Sobel 算子）
-                        let mut i = 0;
-                        while i + 2 < data.len() {
-                            let pixel_idx = i / 3;
-                            let x = pixel_idx % src_size;
-                            let y = pixel_idx / src_size;
-
-                            if x == 0 || y == 0 || x == src_size - 1 || y == src_size - 1 {
-                                i += 3;
-                                continue;
-                            }
-
-                            let get_gray = |dx: isize, dy: isize| -> f32 {
-                                let nidx = (((y as isize + dy) as usize) * src_size
-                                    + ((x as isize + dx) as usize)) * 3;
-                                0.299 * data[nidx] as f32
-                                    + 0.587 * data[nidx + 1] as f32
-                                    + 0.114 * data[nidx + 2] as f32
-                            };
-
-                            let gx = -get_gray(-1, -1) - 2.0 * get_gray(-1, 0) - get_gray(-1, 1)
-                                    + get_gray(1, -1) + 2.0 * get_gray(1, 0) + get_gray(1, 1);
-                            let gy = -get_gray(-1, -1) - 2.0 * get_gray(0, -1) - get_gray(1, -1)
-                                    + get_gray(-1, 1) + 2.0 * get_gray(0, 1) + get_gray(1, 1);
-                            let magnitude = (gx * gx + gy * gy).sqrt().min(255.0) * strength;
-
-                            result[i] = magnitude as u8;
-                            result[i + 1] = magnitude as u8;
-                            result[i + 2] = magnitude as u8;
-                            i += 3;
-                        }
+                        // 边缘检测 - 使用 Sobel 算子
+                        edge_detect_image(&dynamic_img, strength)
                     }
                     "emboss" => {
                         // 浮雕效果
-                        let kernel = [-2.0, -1.0, 0.0, -1.0, 1.0, 1.0, 0.0, 1.0, 2.0];
-                        let mut i = 0;
-                        while i + 2 < data.len() {
-                            let pixel_idx = i / 3;
-                            let x = pixel_idx % src_size;
-                            let y = pixel_idx / src_size;
-
-                            if x == 0 || y == 0 || x == src_size - 1 || y == src_size - 1 {
-                                i += 3;
-                                continue;
-                            }
-
-                            let mut sum = 0.0;
-                            let mut k_idx = 0;
-                            for &dy in &[-1i32, 0, 1] {
-                                for &dx in &[-1i32, 0, 1] {
-                                    let nidx = (((y as isize + dy as isize) as usize) * src_size
-                                        + ((x as isize + dx as isize) as usize)) * 3;
-                                    let gray = 0.299 * data[nidx] as f32
-                                        + 0.587 * data[nidx + 1] as f32
-                                        + 0.114 * data[nidx + 2] as f32;
-                                    sum += gray * kernel[k_idx];
-                                    k_idx += 1;
-                                }
-                            }
-                            let val = (sum * strength + 128.0).clamp(0.0, 255.0) as u8;
-                            result[i] = val;
-                            result[i + 1] = val;
-                            result[i + 2] = val;
-                            i += 3;
-                        }
+                        emboss_image(&dynamic_img, strength)
                     }
-                    "median" | _ => {
-                        // 中值滤波（简化版）
-                        result = data.clone();
+                    "median" => {
+                        // 中值滤波 - 用于降噪
+                        median_filter(&dynamic_img, radius as usize)
                     }
-                }
-                result
+                    "grayscale" => {
+                        // 灰度化
+                        DynamicImage::from(dynamic_img.grayscale())
+                    }
+                    "invert" => {
+                        // 反转颜色
+                        invert_image(&dynamic_img)
+                    }
+                    _ => {
+                        // 默认：不处理
+                        dynamic_img
+                    }
+                };
+                
+                // 将结果转换回 Vec<u8>
+                result_img.to_rgb8().into_raw()
             }
             _ => return Err(Error::TypeError("Expected IMAGE".to_string())),
         };
@@ -705,6 +600,174 @@ impl Node for ImageFilterNode {
             ("IMAGE".to_string(), Value::Image(filtered)),
         ]))
     }
+}
+
+// ============================================================================
+// 滤镜辅助函数
+// ============================================================================
+
+/// 混合两张图像
+fn blend_images(base: &DynamicImage, overlay: &DynamicImage, alpha: f32) -> DynamicImage {
+    let (width, height) = base.dimensions();
+    let mut result = base.to_rgb8();
+    
+    for y in 0..height {
+        for x in 0..width {
+            let base_pixel = base.get_pixel(x, y);
+            let overlay_pixel = overlay.get_pixel(x, y);
+            
+            let r = (base_pixel.0[0] as f32 * (1.0 - alpha) + overlay_pixel.0[0] as f32 * alpha) as u8;
+            let g = (base_pixel.0[1] as f32 * (1.0 - alpha) + overlay_pixel.0[1] as f32 * alpha) as u8;
+            let b = (base_pixel.0[2] as f32 * (1.0 - alpha) + overlay_pixel.0[2] as f32 * alpha) as u8;
+            
+            result.put_pixel(x, y, Rgb([r, g, b]));
+        }
+    }
+    
+    DynamicImage::from(result)
+}
+
+/// 锐化图像
+fn sharpen_image(original: &DynamicImage, blurred: &DynamicImage, strength: f32) -> DynamicImage {
+    let (width, height) = original.dimensions();
+    let mut result = original.to_rgb8();
+    
+    for y in 0..height {
+        for x in 0..width {
+            let orig_pixel = original.get_pixel(x, y);
+            let blur_pixel = blurred.get_pixel(x, y);
+            
+            for c in 0..3 {
+                let orig = orig_pixel.0[c] as f32;
+                let blur = blur_pixel.0[c] as f32;
+                let sharpened = orig + (orig - blur) * strength;
+                result.get_pixel_mut(x, y).0[c] = sharpened.clamp(0.0, 255.0) as u8;
+            }
+        }
+    }
+    
+    DynamicImage::from(result)
+}
+
+/// 边缘检测（Sobel 算子）
+fn edge_detect_image(img: &DynamicImage, strength: f32) -> DynamicImage {
+    let (width, height) = img.dimensions();
+    let mut result = ImageBuffer::new(width, height);
+    
+    // Sobel 算子
+    let gx_kernel: [[f32; 3]; 3] = [[-1.0, 0.0, 1.0], [-2.0, 0.0, 2.0], [-1.0, 0.0, 1.0]];
+    let gy_kernel: [[f32; 3]; 3] = [[-1.0, -2.0, -1.0], [0.0, 0.0, 0.0], [1.0, 2.0, 1.0]];
+    
+    for y in 1..height-1 {
+        for x in 1..width-1 {
+            let mut gx = 0.0;
+            let mut gy = 0.0;
+            
+            for ky in 0..3usize {
+                for kx in 0..3usize {
+                    let px = x + kx as u32 - 1;
+                    let py = y + ky as u32 - 1;
+                    let pixel = img.get_pixel(px, py);
+                    // 转换为灰度
+                    let gray = 0.299 * pixel.0[0] as f32 + 0.587 * pixel.0[1] as f32 + 0.114 * pixel.0[2] as f32;
+                    
+                    gx += gray * gx_kernel[ky][kx];
+                    gy += gray * gy_kernel[ky][kx];
+                }
+            }
+            
+            let magnitude = (gx * gx + gy * gy).sqrt() * strength;
+            let edge = magnitude.min(255.0) as u8;
+            
+            result.put_pixel(x, y, Rgb([edge, edge, edge]));
+        }
+    }
+    
+    DynamicImage::from(result)
+}
+
+/// 浮雕效果
+fn emboss_image(img: &DynamicImage, strength: f32) -> DynamicImage {
+    let (width, height) = img.dimensions();
+    let mut result = ImageBuffer::new(width, height);
+    
+    // 浮雕核
+    let kernel: [[f32; 3]; 3] = [[-2.0, -1.0, 0.0], [-1.0, 1.0, 1.0], [0.0, 1.0, 2.0]];
+    
+    for y in 1..height-1 {
+        for x in 1..width-1 {
+            let mut sum = 0.0;
+            
+            for ky in 0..3usize {
+                for kx in 0..3usize {
+                    let px = x + kx as u32 - 1;
+                    let py = y + ky as u32 - 1;
+                    let pixel = img.get_pixel(px, py);
+                    let gray = 0.299 * pixel.0[0] as f32 + 0.587 * pixel.0[1] as f32 + 0.114 * pixel.0[2] as f32;
+                    sum += gray * kernel[ky][kx];
+                }
+            }
+            
+            let val = (sum * strength + 128.0).clamp(0.0, 255.0) as u8;
+            result.put_pixel(x, y, Rgb([val, val, val]));
+        }
+    }
+    
+    DynamicImage::from(result)
+}
+
+/// 中值滤波
+fn median_filter(img: &DynamicImage, radius: usize) -> DynamicImage {
+    let (width, height) = img.dimensions();
+    let mut result = ImageBuffer::new(width, height);
+    let r = radius.max(1);
+    
+    for y in 0..height {
+        for x in 0..width {
+            let mut reds = Vec::new();
+            let mut greens = Vec::new();
+            let mut blues = Vec::new();
+            
+            for dy in -(r as i32)..=(r as i32) {
+                for dx in -(r as i32)..=(r as i32) {
+                    let nx = (x as i32 + dx).clamp(0, width as i32 - 1) as u32;
+                    let ny = (y as i32 + dy).clamp(0, height as i32 - 1) as u32;
+                    let pixel = img.get_pixel(nx, ny);
+                    reds.push(pixel.0[0]);
+                    greens.push(pixel.0[1]);
+                    blues.push(pixel.0[2]);
+                }
+            }
+            
+            reds.sort();
+            greens.sort();
+            blues.sort();
+            
+            let mid = reds.len() / 2;
+            result.put_pixel(x, y, Rgb([reds[mid], greens[mid], blues[mid]]));
+        }
+    }
+    
+    DynamicImage::from(result)
+}
+
+/// 反转颜色
+fn invert_image(img: &DynamicImage) -> DynamicImage {
+    let (width, height) = img.dimensions();
+    let mut result = img.to_rgb8();
+    
+    for y in 0..height {
+        for x in 0..width {
+            let pixel = result.get_pixel(x, y);
+            result.put_pixel(x, y, Rgb([
+                255 - pixel.0[0],
+                255 - pixel.0[1],
+                255 - pixel.0[2],
+            ]));
+        }
+    }
+    
+    DynamicImage::from(result)
 }
 
 // ============================================================================

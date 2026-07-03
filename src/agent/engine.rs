@@ -2,7 +2,9 @@
 // 用户对话入口，调用 gliding_horse 的 PDCA 循环
 
 use std::sync::Arc;
+use std::path::PathBuf;
 use crate::agent::context::AgentContext;
+use crate::config::AppConfig;
 
 /// Agent Engine
 ///
@@ -11,13 +13,15 @@ use crate::agent::context::AgentContext;
 /// 2. 工作流执行入口（execute_workflow）
 /// 3. 状态查询（status）
 ///
-/// Batch 1 骨架，Batch 5-6 完善实现
+/// Agent 引擎实现
 pub struct AgentEngine {
     /// Agent 上下文（依赖注入容器）
     context: AgentContext,
     /// SupervisorAgent（gliding_horse PDCA 核心）
     /// Batch 5 初始化，初期为 None
     supervisor: Option<glidinghorse::core::SupervisorAgent>,
+    /// 应用配置
+    config: Option<AppConfig>,
 }
 
 impl AgentEngine {
@@ -29,6 +33,18 @@ impl AgentEngine {
         Self {
             context,
             supervisor: None,
+            config: None,
+        }
+    }
+
+    /// 创建 AgentEngine 并加载配置
+    ///
+    /// 使用配置中的提示词目录加载模板
+    pub fn with_config(context: AgentContext, config: AppConfig) -> Self {
+        Self {
+            context,
+            supervisor: None,
+            config: Some(config),
         }
     }
 
@@ -65,14 +81,39 @@ impl AgentEngine {
             glidinghorse::memory::MemoryManager::new(l0.clone(), blackboard.clone(), projection.clone(), core_config)
         ));
 
-        // 构建 TemplateEngine（使用临时目录）
-        let templates_dir = std::env::temp_dir().join("agent_templates");
+        // 构建 TemplateEngine（使用配置目录或默认目录）
+        let templates_dir = self.config.as_ref()
+            .map(|c| PathBuf::from(&c.paths.prompts_dir))
+            .unwrap_or_else(|| {
+                // 尝试多个候选目录
+                let candidates = [
+                    PathBuf::from("prompts"),
+                    PathBuf::from(".gliding_horse/prompts"),
+                    std::env::temp_dir().join("agent_templates"),
+                ];
+                for candidate in candidates {
+                    if candidate.exists() {
+                        log::info!("Using prompts directory: {:?}", candidate);
+                        return candidate;
+                    }
+                }
+                // 默认使用项目根目录下的 prompts
+                PathBuf::from("prompts")
+            });
+
+        // 确保目录存在
         std::fs::create_dir_all(&templates_dir)
-            .map_err(|e| format!("Failed to create templates dir: {}", e))?;
+            .map_err(|e| format!("Failed to create prompts dir {:?}: {}", templates_dir, e))?;
+
+        log::info!("Loading prompt templates from: {:?}", templates_dir);
+
         let templates = Arc::new(
             glidinghorse::templates::TemplateEngine::new(&templates_dir)
                 .map_err(|e| format!("Failed to init TemplateEngine: {}", e))?
         );
+
+        // 注册 ComfyUI 专用提示词模板
+        self.register_comfyui_prompts(&templates);
 
         // 构建 AgentSettings
         let agent_settings = glidinghorse::config::AgentSettings::default();
@@ -88,7 +129,13 @@ impl AgentEngine {
             agent_settings,
         ));
 
-        // TODO: Batch 2 注册 ComfyUI 工具到 runner.tool_executor
+        // 注册 ComfyUI 工具到 runner.tool_executor
+        {
+            let mut tool_executor = runner.tool_executor.write()
+                .expect("Failed to lock tool_executor");
+            crate::agent::tools::register_comfyui_tools(&mut tool_executor, Arc::new(self.context.clone()));
+            log::info!("Registered ComfyUI tools to AgentRunner");
+        }
 
         // 构建 EventBus
         let event_bus = Arc::new(glidinghorse::core::event_bus::EventBus::new(100));
@@ -106,6 +153,42 @@ impl AgentEngine {
 
         self.supervisor = Some(supervisor);
         Ok(())
+    }
+
+    /// 注册 ComfyUI 专用提示词模板
+    ///
+    /// 从文件加载或使用内置 fallback
+    fn register_comfyui_prompts(&self, templates: &Arc<glidinghorse::templates::TemplateEngine>) {
+        // 定义 ComfyUI Agent 角色
+        let roles = ["pa", "da", "ca", "aa", "sa"];
+
+        for role in roles {
+            // 尝试从文件加载
+            let template_path = PathBuf::from("prompts").join(role).join("system.md");
+            if template_path.exists() {
+                if let Ok(content) = std::fs::read_to_string(&template_path) {
+                    log::info!("Loaded prompt template for role '{}' from {:?}", role, template_path);
+                    templates.add_template(&format!("{}_system", role), &content, role);
+                }
+            } else {
+                // 使用内置 fallback
+                let fallback = self.get_builtin_prompt(role);
+                templates.add_template(&format!("{}_system", role), fallback, role);
+                log::info!("Using builtin prompt template for role '{}'", role);
+            }
+        }
+    }
+
+    /// 获取内置提示词（当文件不存在时的 fallback）
+    fn get_builtin_prompt(&self, role: &str) -> &'static str {
+        match role {
+            "pa" => "You are the Planning Agent (PA) for ComfyUI image/video generation. Analyze the user request and create a generation plan. Select the appropriate workflow template, recommend parameters and models. Output JSON-formatted results.",
+            "da" => "You are the Doing Agent (DA) for ComfyUI. Execute the generation workflow, construct the node graph, and produce the output. Output JSON-formatted results.",
+            "ca" => "You are the Checking Agent (CA) for ComfyUI. Verify the generation output quality, check if it matches user requirements. Output JSON-formatted results.",
+            "aa" => "You are the Acting Agent (AA) for ComfyUI. Make final decisions based on quality check results, adjust parameters if needed, and provide user summary. Output JSON-formatted results.",
+            "sa" => "You are the Supervisor Agent (SA) for ComfyUI Rust Agent. Coordinate PA, DA, CA, AA agents to complete image/video generation tasks using PDCA cycle. Output JSON-formatted results.",
+            _ => "",
+        }
     }
 
     /// 处理用户任务（自然语言对话）
@@ -170,6 +253,7 @@ impl Clone for AgentEngine {
         Self {
             context: self.context.clone(),
             supervisor: None, // SupervisorAgent 不 clone，需重新 build
+            config: self.config.clone(),
         }
     }
 }

@@ -1,0 +1,150 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Doing Agent Output Schema",
+  "description": "DA 执行输出的 JSON Schema 验证",
+  "type": "object",
+  "required": ["status", "workflow_json", "outputs"],
+  "properties": {
+    "status": {
+      "type": "string",
+      "enum": ["success", "failed", "partial"]
+    },
+    "workflow_json": {
+      "type": "object",
+      "required": ["prompt_id", "nodes"],
+      "properties": {
+        "prompt_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "client_id": {
+          "type": "string"
+        },
+        "nodes": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "required": ["class_type", "inputs"],
+            "properties": {
+              "class_type": { "type": "string" },
+              "inputs": { "type": "object" }
+            }
+          }
+        },
+        "links": {
+          "type": "array",
+          "items": {
+            "type": "array",
+            "minItems": 5,
+            "maxItems": 5
+          }
+        },
+        "extra": {
+          "type": "object"
+        }
+      }
+    },
+    "execution_log": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["node_id", "node_type", "status"],
+        "properties": {
+          "node_id": { "type": "string" },
+          "node_type": { "type": "string" },
+          "status": {
+            "type": "string",
+            "enum": ["success", "failed"]
+          },
+          "duration_ms": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "message": { "type": "string" }
+        }
+      }
+    },
+    "outputs": {
+      "type": "object",
+      "properties": {
+        "images": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["path", "width", "height", "format"],
+            "properties": {
+              "path": { "type": "string" },
+              "width": { "type": "integer", "minimum": 1 },
+              "height": { "type": "integer", "minimum": 1 },
+              "format": {
+                "type": "string",
+                "enum": ["png", "jpg", "jpeg", "webp"]
+              }
+            }
+          }
+        },
+        "videos": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["path", "format"],
+            "properties": {
+              "path": { "type": "string" },
+              "duration": {
+                "type": "number",
+                "minimum": 0
+              },
+              "fps": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 60
+              },
+              "frames": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "format": {
+                "type": "string",
+                "enum": ["mp4", "webm", "gif"]
+              }
+            }
+          }
+        }
+      }
+    },
+    "errors": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["node_id", "error_type", "error_message"],
+        "properties": {
+          "node_id": { "type": "string" },
+          "error_type": { "type": "string" },
+          "error_message": { "type": "string" },
+          "suggestion": { "type": "string" }
+        }
+      }
+    },
+    "metrics": {
+      "type": "object",
+      "properties": {
+        "total_time_ms": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "sampling_time_ms": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "decode_time_ms": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "gpu_memory_used_mb": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    }
+  }
+}

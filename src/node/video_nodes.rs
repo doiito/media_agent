@@ -10,6 +10,92 @@ use std::sync::Arc;
 use log::{info, debug, warn};
 
 // ============================================================================
+// 球面线性插值（SLERP）辅助函数
+// ============================================================================
+
+/// 球面线性插值（Spherical Linear Interpolation）
+/// 
+/// 用于在两个向量之间进行平滑的球面插值，保持向量的方向和长度特性。
+/// 公式：slerp(v0, v1, t) = (sin(Ω * (1-t)) / sin(Ω)) * v0 + (sin(Ω * t) / sin(Ω)) * v1
+/// 其中 Ω = acos(v0 · v1) 是两个向量之间的夹角。
+/// 
+/// 参数：
+/// - v0: 起始向量
+/// - v1: 结束向量
+/// - t: 插值参数 [0, 1]
+/// 
+/// 返回：
+/// - 插值后的向量
+fn slerp_vector(v0: &[f32], v1: &[f32], t: f32) -> Vec<f32> {
+    let len = v0.len();
+    if len == 0 || v0.len() != v1.len() {
+        return Vec::new();
+    }
+    
+    // 计算向量点积（用于确定夹角）
+    let dot: f32 = v0.iter()
+        .zip(v1.iter())
+        .map(|(a, b)| a * b)
+        .sum();
+    
+    // 归一化点积（防止超出 acos 的有效范围 [-1, 1]）
+    let dot_normalized = dot.clamp(-1.0, 1.0);
+    
+    // 计算夹角 Ω = acos(dot)
+    let omega = dot_normalized.acos();
+    
+    // 如果夹角很小（向量几乎平行），使用线性插值避免除零错误
+    if omega.abs() < 1e-6 {
+        return v0.iter()
+            .zip(v1.iter())
+            .map(|(a, b)| a * (1.0 - t) + b * t)
+            .collect();
+    }
+    
+    // 计算 slerp 的系数
+    let sin_omega = omega.sin();
+    let coeff0 = ((1.0 - t) * omega).sin() / sin_omega;
+    let coeff1 = (t * omega).sin() / sin_omega;
+    
+    // 计算 slerp 结果
+    v0.iter()
+        .zip(v1.iter())
+        .map(|(a, b)| coeff0 * a + coeff1 * b)
+        .collect()
+}
+
+/// 批量 slerp（对 latent 张量进行批量球面插值）
+/// 
+/// 将 latent 数据按通道分组，每组进行 slerp，用于视频帧过渡。
+/// 
+/// 参数：
+/// - latent1: 起始 latent 数据
+/// - latent2: 结束 latent 数据
+/// - t: 插值参数 [0, 1]
+/// - channels: 通道数（通常为 4）
+fn batch_slerp(latent1: &[f32], latent2: &[f32], t: f32, channels: usize) -> Vec<f32> {
+    let total_len = latent1.len().min(latent2.len());
+    let num_vectors = total_len / channels;
+    let mut result = Vec::with_capacity(total_len);
+    
+    for v_idx in 0..num_vectors {
+        let base_idx = v_idx * channels;
+        let v0 = &latent1[base_idx..base_idx + channels];
+        let v1 = &latent2[base_idx..base_idx + channels];
+        
+        let interpolated = slerp_vector(v0, v1, t);
+        result.extend(interpolated);
+    }
+    
+    // 处理剩余元素
+    for i in (num_vectors * channels)..total_len {
+        result.push(latent1[i] * (1.0 - t) + latent2[i] * t);
+    }
+    
+    result
+}
+
+// ============================================================================
 // SVDImageToVideo 节点 - 使用 SVD 进行图生视频
 // ============================================================================
 
@@ -783,6 +869,8 @@ impl Node for LatentInterpolationNode {
 
                 for i in 0..=num_interpolations + 1 {
                     let t = i as f32 / (num_interpolations + 1) as f32;
+                    
+                    // 根据插值方法计算调整后的 t 值
                     let t_adjusted = match method {
                         "lerp" => t,
                         "ease_in" => t * t,
@@ -795,17 +883,49 @@ impl Node for LatentInterpolationNode {
                             }
                         }
                         "slerp" => {
-                            // 简化的 slerp（实际 slerp 需要向量点积计算）
+                            // slerp 不调整 t，而是在后面的混合计算中使用 slerp 公式
                             t
                         }
                         _ => t,
                     };
 
-                    for j in 0..len {
-                        let v1 = data1[j];
-                        let v2 = data2[j];
-                        let mixed = v1 * (1.0 - t_adjusted) + v2 * t_adjusted;
-                        combined.push(mixed);
+                    // 对每个 latent 元素进行插值
+                    // 对于 slerp，将 4 通道看作向量进行球面插值
+                    if method == "slerp" {
+                        // 球面线性插值（Spherical Linear Interpolation）
+                        // 将 latent 的每 4 个元素看作一个向量
+                        let channels = 4;
+                        let num_vectors = len / channels;
+                        
+                        for v_idx in 0..num_vectors {
+                            let base_idx = v_idx * channels;
+                            
+                            // 提取两个向量
+                            let v0: Vec<f32> = data1[base_idx..base_idx+channels].to_vec();
+                            let v1: Vec<f32> = data2[base_idx..base_idx+channels].to_vec();
+                            
+                            // 计算 slerp
+                            let slerp_result = slerp_vector(&v0, &v1, t_adjusted);
+                            
+                            for c in 0..channels {
+                                combined.push(slerp_result[c]);
+                            }
+                        }
+                        
+                        // 处理剩余元素（如果不是 4 的倍数）
+                        for j in (num_vectors * channels)..len {
+                            let v1 = data1[j];
+                            let v2 = data2[j];
+                            combined.push(v1 * (1.0 - t_adjusted) + v2 * t_adjusted);
+                        }
+                    } else {
+                        // 其他插值方法使用线性混合
+                        for j in 0..len {
+                            let v1 = data1[j];
+                            let v2 = data2[j];
+                            let mixed = v1 * (1.0 - t_adjusted) + v2 * t_adjusted;
+                            combined.push(mixed);
+                        }
                     }
                 }
 

@@ -88,10 +88,10 @@ pub struct ModelCache {
     ram_cache: Arc<RwLock<Vec<CacheEntry>>>,
     /// VRAM 缓存
     vram_cache: Arc<RwLock<Vec<CacheEntry>>>,
-    /// RAM 最大容量（字节），默认 8GB
-    ram_capacity: u64,
-    /// VRAM 最大容量（字节），默认 6GB
-    vram_capacity: u64,
+    /// RAM 最大容量（字节），默认 8GB（使用 RwLock 支持动态调整）
+    ram_capacity: Arc<RwLock<u64>>,
+    /// VRAM 最大容量（字节），默认 6GB（使用 RwLock 支持动态调整）
+    vram_capacity: Arc<RwLock<u64>>,
     /// 统计信息
     stats: Arc<CacheStatsAtomic>,
 }
@@ -131,8 +131,8 @@ impl ModelCache {
         Self {
             ram_cache: Arc::new(RwLock::new(Vec::new())),
             vram_cache: Arc::new(RwLock::new(Vec::new())),
-            ram_capacity,
-            vram_capacity,
+            ram_capacity: Arc::new(RwLock::new(ram_capacity)),
+            vram_capacity: Arc::new(RwLock::new(vram_capacity)),
             stats: Arc::new(CacheStatsAtomic::new()),
         }
     }
@@ -373,16 +373,17 @@ impl ModelCache {
     /// 确保 VRAM 有足够容量
     async fn ensure_vram_capacity(&self, needed: u64) -> Result<(), String> {
         let mut vram = self.vram_cache.write().await;
+        let vram_capacity = *self.vram_capacity.read().await;
         let current_size: u64 = vram.iter().map(|e| e.size_bytes).sum();
 
-        if current_size + needed <= self.vram_capacity {
+        if current_size + needed <= vram_capacity {
             return Ok(());
         }
 
         // LRU 驱逐：按最后访问时间排序，驱逐最久未访问的
         vram.sort_by_key(|e| e.last_access);
 
-        while current_size + needed > self.vram_capacity && !vram.is_empty() {
+        while current_size + needed > vram_capacity && !vram.is_empty() {
             let evicted = vram.remove(0);
             warn!(
                 "VRAM LRU 驱逐: {} ({}), 释放 {}",
@@ -396,12 +397,12 @@ impl ModelCache {
 
         // 如果驱逐后还是不够
         let new_size: u64 = vram.iter().map(|e| e.size_bytes).sum();
-        if new_size + needed > self.vram_capacity {
+        if new_size + needed > vram_capacity {
             return Err(format!(
                 "VRAM 容量不足: 需要 {}, 可用 {} (容量 {})",
                 crate::model_manager::model_info::format_size(needed),
-                crate::model_manager::model_info::format_size(self.vram_capacity.saturating_sub(new_size)),
-                crate::model_manager::model_info::format_size(self.vram_capacity)
+                crate::model_manager::model_info::format_size(vram_capacity.saturating_sub(new_size)),
+                crate::model_manager::model_info::format_size(vram_capacity)
             ));
         }
 
@@ -411,16 +412,17 @@ impl ModelCache {
     /// 确保 RAM 有足够容量
     async fn ensure_ram_capacity(&self, needed: u64) -> Result<(), String> {
         let mut ram = self.ram_cache.write().await;
+        let ram_capacity = *self.ram_capacity.read().await;
         let current_size: u64 = ram.iter().map(|e| e.size_bytes).sum();
 
-        if current_size + needed <= self.ram_capacity {
+        if current_size + needed <= ram_capacity {
             return Ok(());
         }
 
         // LRU 驱逐
         ram.sort_by_key(|e| e.last_access);
 
-        while current_size + needed > self.ram_capacity && !ram.is_empty() {
+        while current_size + needed > ram_capacity && !ram.is_empty() {
             let evicted = ram.remove(0);
             warn!(
                 "RAM LRU 驱逐: {} ({}), 释放 {}",
@@ -433,38 +435,40 @@ impl ModelCache {
         }
 
         let new_size: u64 = ram.iter().map(|e| e.size_bytes).sum();
-        if new_size + needed > self.ram_capacity {
+        if new_size + needed > ram_capacity {
             return Err(format!(
                 "RAM 容量不足: 需要 {}, 可用 {} (容量 {})",
                 crate::model_manager::model_info::format_size(needed),
-                crate::model_manager::model_info::format_size(self.ram_capacity.saturating_sub(new_size)),
-                crate::model_manager::model_info::format_size(self.ram_capacity)
+                crate::model_manager::model_info::format_size(ram_capacity.saturating_sub(new_size)),
+                crate::model_manager::model_info::format_size(ram_capacity)
             ));
         }
 
         Ok(())
     }
 
-    /// 设置 RAM 容量
-    pub fn set_ram_capacity(&self, _capacity: u64) {
-        // Note: 由于 ram_capacity 不是 mut，需要通过内部可变性
-        // 这里简化实现，实际生产中应使用 RwLock<u64>
-        warn!("set_ram_capacity 暂未实现（需要内部可变性改造）");
+    /// 设置 RAM 容量（动态调整）
+    pub async fn set_ram_capacity(&self, capacity: u64) {
+        let mut ram_cap = self.ram_capacity.write().await;
+        *ram_cap = capacity;
+        info!("RAM 缓存容量已更新为: {}", crate::model_manager::model_info::format_size(capacity));
     }
 
-    /// 设置 VRAM 容量
-    pub fn set_vram_capacity(&self, _capacity: u64) {
-        warn!("set_vram_capacity 暂未实现（需要内部可变性改造）");
+    /// 设置 VRAM 容量（动态调整）
+    pub async fn set_vram_capacity(&self, capacity: u64) {
+        let mut vram_cap = self.vram_capacity.write().await;
+        *vram_cap = capacity;
+        info!("VRAM 缓存容量已更新为: {}", crate::model_manager::model_info::format_size(capacity));
     }
 
     /// 获取 RAM 容量
-    pub fn ram_capacity(&self) -> u64 {
-        self.ram_capacity
+    pub async fn get_ram_capacity(&self) -> u64 {
+        *self.ram_capacity.read().await
     }
 
     /// 获取 VRAM 容量
-    pub fn vram_capacity(&self) -> u64 {
-        self.vram_capacity
+    pub async fn get_vram_capacity(&self) -> u64 {
+        *self.vram_capacity.read().await
     }
 }
 

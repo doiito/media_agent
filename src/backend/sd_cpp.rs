@@ -1,5 +1,5 @@
 // stable-diffusion.cpp 集成实现
-// 生产级别实现，包含进程管理、错误处理、重试机制、并发控制
+// 包含进程管理、错误处理、重试机制、并发控制
 
 use crate::types::*;
 use crate::backend::{T2IParams, I2IParams, T2VParams};
@@ -758,7 +758,7 @@ pub struct SdProcessStats {
 // 高级后端接口
 // ============================================================================
 
-/// stable-diffusion.cpp 后端（生产级别）
+/// stable-diffusion.cpp 后端实现
 pub struct StableDiffusionCppBackend {
     process_manager: Arc<Mutex<SdCppProcessManager>>,
     semaphore: Arc<Semaphore>,

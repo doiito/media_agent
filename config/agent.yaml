@@ -12,27 +12,27 @@ agent:
     # 如果环境变量未设置，使用以下默认值
     base_url: "${DEEPSEEK_API_URL:-https://api.deepseek.com/v1}"
     api_key: "${DEEPSEEK_API_KEY:-}"
-    
+
     # 默认模型
-    # DeepSeek: deepseek-chat, deepseek-reasoner
+    # DeepSeek: deepseek-v4-flash, deepseek-v4-pro
     # 本地: qwen2.5-7b-instruct
     default_model: "deepseek-v4-flash"
-    
+
     # 备用模型（当 primary 不可用时）
     fallback_model: "deepseek-v4-pro"
-    
+
     # 超时时间（秒）
     timeout_seconds: 120
     # 最大重试次数
     max_retries: 3
     # 重试间隔（秒）
     retry_delay_seconds: 2
-    
+
     # 最大 tokens
     max_tokens: 4096
     # 温度
     temperature: 0.7
-  
+
   # VLM（视觉语言模型）配置
   vlm:
     # HuggingFace 模型
@@ -41,14 +41,14 @@ agent:
     cache_dir: "models/vlm"
     # 下载超时（秒）
     download_timeout_seconds: 600
-  
+
   # 记忆系统配置
   memory:
     # 数据目录（用于 L0 redb 持久化）
     data_dir: "data/agent_memory"
     # Blackboard 最大投影缓存大小
     projection_cache_size: 500
-  
+
   # Agent 运行设置
   settings:
     # 最大迭代次数（单次对话）
@@ -59,14 +59,14 @@ agent:
     event_bus_capacity: 100
     # 工具调用并发限制
     max_concurrent_tool_calls: 3
-  
+
   # 技能配置
   skills:
     # 技能目录
     skills_dir: "skills"
     # 是否加载内置技能（当 skills 目录不存在时）
     load_builtin: true
-  
+
   # 工作流配置
   workflows:
     # 工作流模板目录
@@ -74,11 +74,37 @@ agent:
     # 默认工作流（可选）
     default_workflow: "generate_and_review"
 
+  # 提示词配置
+  prompts:
+    # 提示词模板目录
+    prompts_dir: "prompts"
+    # Schema 目录
+    schemas_dir: "schemas"
+    # 提示词加载优先级：file > builtin
+    prefer_builtin: false
+
 # 服务器配置（继承现有配置）
 server:
   host: "0.0.0.0"
   port: 8188
   output_dir: "output"
+
+# 路径配置
+paths:
+  # 模型根目录
+  models_dir: "models"
+  # 输入目录（上传图像等）
+  input_dir: "input"
+  # 临时目录
+  temp_dir: "/tmp"
+  # 提示词模板目录
+  prompts_dir: "prompts"
+  # Schema 目录
+  schemas_dir: "schemas"
+  # 工作流模板目录
+  workflows_dir: "workflows"
+  # 技能定义目录
+  skills_dir: "skills"
 
 # 日志配置
 log:

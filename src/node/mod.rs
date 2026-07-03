@@ -1,6 +1,7 @@
 // 节点系统模块
 
 pub mod registry;
+pub mod node_registry;
 pub mod core_nodes;
 pub mod extended_nodes;
 pub mod advanced_sampler;
@@ -8,6 +9,7 @@ pub mod image_processing;
 pub mod video_nodes;
 
 pub use registry::NodeRegistry;
+pub use node_registry::{NodeRegistry as NodeTypeRegistry, NodeSpec, NodePort, DataKind};
 pub use core_nodes::*;
 pub use extended_nodes::*;
 pub use advanced_sampler::*;

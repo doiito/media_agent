@@ -1,5 +1,4 @@
-// 核心节点实现
-// 生产级别，集成真实后端调用
+// 核心节点实现，集成后端调用
 
 use crate::types::*;
 use crate::node::{Node, InputType, OutputType};

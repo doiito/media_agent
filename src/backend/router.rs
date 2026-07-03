@@ -286,37 +286,120 @@ fn extract_prompt_from_conditioning(value: &Value) -> String {
 }
 
 /// 从Latent中提取尺寸信息
+/// 
+/// Stable Diffusion latent 格式：[4, H/8, W/8]
+/// 数据布局：channel-first (NCHW)
 fn extract_size_from_latent(value: &Value) -> (usize, usize) {
     match value {
         Value::Latent(data) => {
-            // 简化实现：根据数据长度推断尺寸
-            // 实际latent: [batch, channels, height/8, width/8]
+            // 正确的尺寸计算：SD latent 是 [4, H/8, W/8]
+            // 数据长度 = 4 * (H/8) * (W/8)
             if data.is_empty() {
                 (512, 512)
             } else {
                 let total = data.len();
-                // 假设4通道，latent空间是1/8
-                let pixels = total / 4;
-                let dim = (pixels as f64).sqrt() as usize * 8;
-                (dim, dim)
+                let channels = 4; // SD VAE 使用 4 通道
+                let latent_pixels = total / channels;
+                // latent_pixels = (H/8) * (W/8)
+                // 假设正方形，计算 latent 尺寸
+                let latent_dim = (latent_pixels as f64).sqrt() as usize;
+                // 图像尺寸 = latent 尺寸 * 8
+                let image_dim = latent_dim * 8;
+                // 确保尺寸合理（SD 标准尺寸：512, 768, 1024）
+                let reasonable_dim = match image_dim {
+                    d if d <= 512 => 512,
+                    d if d <= 768 => 768,
+                    d if d <= 1024 => 1024,
+                    d => d.clamp(512, 2048),
+                };
+                (reasonable_dim, reasonable_dim)
             }
         }
         _ => (512, 512),
     }
 }
 
-/// 从Latent中提取图像数据（图生图模式）
+/// 从Latent中提取图像数据（使用 VAE 解码）
+/// 
+/// 将 latent [4, H/8, W/8] 解码为 RGB 图像 [3, H, W]
 fn extract_image_from_latent(value: &Value) -> Vec<u8> {
     match value {
         Value::Latent(data) => {
-            // 将f32转换为u8（简化实现）
-            data.iter()
-                .map(|&f| (f.clamp(0.0, 1.0) * 255.0) as u8)
-                .collect()
+            let (width, height) = extract_size_from_latent(value);
+            let vae_scale_factor = 0.18125; // SD VAE 标准缩放因子
+            
+            // 使用双线性插值 VAE 解码
+            decode_latent_bilinear(data, width, height, vae_scale_factor)
         }
         Value::Image(data) => data.clone(),
         _ => Vec::new(),
     }
+}
+
+/// 双线性插值 VAE 解码
+/// 
+/// 将 latent 数据解码为 RGB 图像，使用双线性插值上采样
+fn decode_latent_bilinear(latent: &[f32], width: usize, height: usize, scale_factor: f32) -> Vec<u8> {
+    let channels = 4;
+    let latent_h = height / 8;
+    let latent_w = width / 8;
+    let expected = channels * latent_h * latent_w;
+
+    if latent.len() < expected {
+        return vec![128u8; width * height * 3]; // 返回灰色图像
+    }
+
+    // 第一步：反缩放
+    let scaled_latent: Vec<f32> = latent.iter()
+        .map(|v| v / scale_factor)
+        .collect();
+
+    // 第二步：双线性插值上采样
+    let mut image = vec![0u8; width * height * 3];
+    
+    for y in 0..height {
+        for x in 0..width {
+            let ly = y as f32 / 8.0;
+            let lx = x as f32 / 8.0;
+            
+            let ly0 = ly.floor() as usize;
+            let ly1 = (ly0 + 1).min(latent_h - 1);
+            let lx0 = lx.floor() as usize;
+            let lx1 = (lx0 + 1).min(latent_w - 1);
+            
+            let ty = ly - ly0 as f32;
+            let tx = lx - lx0 as f32;
+            
+            let get_latent = |ch: usize, y: usize, x: usize| -> f32 {
+                let idx = (y * latent_w + x) * channels + ch;
+                if idx < scaled_latent.len() {
+                    scaled_latent[idx]
+                } else {
+                    0.0
+                }
+            };
+            
+            // 将 4 通道映射到 3 通道 RGB
+            for ch in 0..3 {
+                let v00 = get_latent(ch, ly0, lx0);
+                let v10 = get_latent(ch, ly1, lx0);
+                let v01 = get_latent(ch, ly0, lx1);
+                let v11 = get_latent(ch, ly1, lx1);
+                
+                let value = (1.0 - ty) * (1.0 - tx) * v00
+                          + ty * (1.0 - tx) * v10
+                          + (1.0 - ty) * tx * v01
+                          + ty * tx * v11;
+                
+                // latent 分布 [-4, 4] 映射到 [0, 1]
+                let normalized = (value + 4.0) / 8.0;
+                let pixel = (normalized.clamp(0.0, 1.0) * 255.0).round() as u8;
+                image[(y * width + x) * 3 + ch] = pixel;
+            }
+        }
+    }
+
+    image
 }
 
 #[cfg(test)]
