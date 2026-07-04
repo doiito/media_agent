@@ -21,6 +21,9 @@ logs/
 # test data
 .trae*/
 
+.code*/
+.gliding*/
+
 # Rust backup files
 **/*.rs.bk
 
