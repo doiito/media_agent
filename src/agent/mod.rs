@@ -11,8 +11,16 @@ pub mod skills;
 pub mod workflow;
 pub mod handlers;
 pub mod llm;
+pub mod advanced_intelligence;
+pub mod workspace_monitor;
 
 pub use context::AgentContext;
 pub use engine::AgentEngine;
 pub use memory::AgentMemory;
 pub use llm::{LlmClient, LlmConfig, LlmError, ChatMessage, ChatRequest, ChatResponse, ToolDefinition};
+pub use advanced_intelligence::{
+    ComfyUiIntelligence, IntelligenceConfig, WorkflowExecutionRecord,
+    SkillRecommendation, FailureAnalysis, ParameterRecommendation,
+    SkillDefinition, SkillLinkDef,
+};
+pub use workspace_monitor::{ComfyUiWorkspaceMonitor, ComfyUiWorkspaceConfig, FileCategory, ChangeType};

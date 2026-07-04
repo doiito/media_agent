@@ -22,6 +22,8 @@ pub struct AgentEngine {
     supervisor: Option<glidinghorse::core::SupervisorAgent>,
     /// 应用配置
     config: Option<AppConfig>,
+    /// ComfyUI 智能引擎（SkillGraph + Discovery + Evolution + KnowledgeGraph + Causal + Timeline）
+    intelligence: Option<Arc<crate::agent::advanced_intelligence::ComfyUiIntelligence>>,
 }
 
 impl AgentEngine {
@@ -34,6 +36,7 @@ impl AgentEngine {
             context,
             supervisor: None,
             config: None,
+            intelligence: None,
         }
     }
 
@@ -45,7 +48,22 @@ impl AgentEngine {
             context,
             supervisor: None,
             config: Some(config),
+            intelligence: None,
         }
+    }
+
+    /// 初始化智能引擎（SkillGraph + Evolution + Causal + KnowledgeGraph）
+    pub fn init_intelligence(&mut self) -> Result<(), String> {
+        let intel_config = crate::agent::advanced_intelligence::IntelligenceConfig::default();
+        let intelligence = crate::agent::advanced_intelligence::ComfyUiIntelligence::new(intel_config)?;
+        self.intelligence = Some(Arc::new(intelligence));
+        log::info!("ComfyUiIntelligence initialized");
+        Ok(())
+    }
+
+    /// 获取智能引擎引用
+    pub fn intelligence(&self) -> Option<&Arc<crate::agent::advanced_intelligence::ComfyUiIntelligence>> {
+        self.intelligence.as_ref()
     }
 
     /// 构建 SupervisorAgent（Batch 5）
@@ -134,7 +152,15 @@ impl AgentEngine {
             let mut tool_executor = runner.tool_executor.write()
                 .expect("Failed to lock tool_executor");
             crate::agent::tools::register_comfyui_tools(&mut tool_executor, Arc::new(self.context.clone()));
-            log::info!("Registered ComfyUI tools to AgentRunner");
+
+            // 注册智能工具（SkillGraph + Discovery + Evolution）
+            if self.intelligence.is_none() {
+                self.init_intelligence()?;
+            }
+            if let Some(ref intel) = self.intelligence {
+                crate::agent::tools::register_intelligence_tools(&mut tool_executor, intel.clone());
+                log::info!("Registered intelligence tools to AgentRunner");
+            }
         }
 
         // 构建 EventBus
@@ -254,6 +280,7 @@ impl Clone for AgentEngine {
             context: self.context.clone(),
             supervisor: None, // SupervisorAgent 不 clone，需重新 build
             config: self.config.clone(),
+            intelligence: self.intelligence.clone(),
         }
     }
 }

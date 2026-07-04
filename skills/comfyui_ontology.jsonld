@@ -1,0 +1,94 @@
+{
+  "@context": {
+    "schema": "https://schema.org/",
+    "skill": "https://agent-harness.os/skill#",
+    "owl": "http://www.w3.org/2002/07/owl#",
+    "rdfs": "http://www.w3.org/2000/01/rdf-schema#"
+  },
+  "@id": "iri://skills/comfyui/ontology",
+  "@type": ["skill:Ontology", "skill:SkillGraph"],
+  "schema:name": "ComfyUI Skill Ontology",
+  "schema:description": "技能图谱本体，定义 ComfyUI 图片/视频生成领域的技能分类、关系类型与链接强度",
+  "skill:version": "1.0.0",
+  "skill:domain": "comfyui",
+  "skill:linkTypes": {
+    "Prerequisite": "前置依赖：执行 A 之前必须先执行 B",
+    "Composition": "组合关系：A 由 B 组合而成",
+    "Related": "相关关系：A 与 B 语义相关",
+    "Alternative": "替代关系：A 与 B 可互换",
+    "Extends": "扩展关系：A 扩展 B 的能力",
+    "Generalization": "泛化关系：A 是 B 的泛化"
+  },
+  "skill:linkStrength": {
+    "Required": "必需：必须满足",
+    "Recommended": "推荐：建议满足",
+    "Optional": "可选：可选满足",
+    "Navigation": "导航：仅用于浏览"
+  },
+  "skill:categories": [
+    {"iri": "comfyui:generation", "name": "生成", "description": "图片/视频生成核心技能"},
+    {"iri": "comfyui:sampler", "name": "采样器", "description": "采样器与调度器配置"},
+    {"iri": "comfyui:postprocess", "name": "后处理", "description": "放大、修复、滤镜等后处理"},
+    {"iri": "comfyui:video", "name": "视频", "description": "视频生成与处理"},
+    {"iri": "comfyui:model", "name": "模型管理", "description": "模型加载与管理"},
+    {"iri": "comfyui:controlnet", "name": "ControlNet", "description": "ControlNet 条件控制"}
+  ],
+  "skill:rootSkills": [
+    "comfyui:text_to_image",
+    "comfyui:image_to_image",
+    "comfyui:video_generation",
+    "comfyui:upscale",
+    "comfyui:inpaint"
+  ],
+  "skill:relationships": [
+    {
+      "source": "comfyui:text_to_image",
+      "target": "comfyui:sampler_euler",
+      "linkType": "Related",
+      "strength": "Recommended",
+      "description": "euler 采样器适合快速预览"
+    },
+    {
+      "source": "comfyui:text_to_image",
+      "target": "comfyui:sampler_dpmpp_2m",
+      "linkType": "Related",
+      "strength": "Recommended",
+      "description": "dpmpp_2m 采样器适合高质量输出"
+    },
+    {
+      "source": "comfyui:image_to_image",
+      "target": "comfyui:text_to_image",
+      "linkType": "Extends",
+      "strength": "Required",
+      "description": "图生图扩展文生图能力"
+    },
+    {
+      "source": "comfyui:video_generation",
+      "target": "comfyui:text_to_image",
+      "linkType": "Prerequisite",
+      "strength": "Required",
+      "description": "视频生成需要先具备文生图能力"
+    },
+    {
+      "source": "comfyui:upscale",
+      "target": "comfyui:text_to_image",
+      "linkType": "Composition",
+      "strength": "Recommended",
+      "description": "放大通常用于文生图后处理"
+    },
+    {
+      "source": "comfyui:sampler_euler",
+      "target": "comfyui:sampler_dpmpp_2m",
+      "linkType": "Alternative",
+      "strength": "Navigation",
+      "description": "两种采样器互为替代"
+    },
+    {
+      "source": "comfyui:inpaint",
+      "target": "comfyui:image_to_image",
+      "linkType": "Extends",
+      "strength": "Required",
+      "description": "局部重绘扩展图生图能力"
+    }
+  ]
+}

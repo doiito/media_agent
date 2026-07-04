@@ -1,0 +1,38 @@
+{
+  "@context": {
+    "schema": "https://schema.org/",
+    "skill": "https://agent-harness.os/skill#"
+  },
+  "@id": "iri://skills/comfyui/inpaint",
+  "@type": ["skill:Skill", "skill:Atomic", "iri://skill-types/ImageEditing"],
+  "schema:name": "inpaint",
+  "schema:description": "局部重绘：基于 mask 对图片指定区域进行重新生成",
+  "skill:version": "1.0.0",
+  "skill:category": "postprocess",
+  "skill:securityLevel": "normal",
+  "skill:allowedRoles": ["DA"],
+  "skill:inputSchema": {
+    "type": "object",
+    "properties": {
+      "image": {"type": "string", "description": "原始图片路径或 base64"},
+      "mask": {"type": "string", "description": "蒙版图片（白色为重绘区域）"},
+      "prompt": {"type": "string", "description": "重绘区域的提示词"},
+      "negative_prompt": {"type": "string", "default": ""},
+      "denoise": {"type": "number", "default": 1.0, "description": "重绘强度（0-1）"},
+      "steps": {"type": "integer", "default": 25},
+      "cfg": {"type": "number", "default": 7.0},
+      "sampler": {"type": "string", "default": "dpmpp_2m"},
+      "scheduler": {"type": "string", "default": "karras"}
+    },
+    "required": ["image", "mask", "prompt"]
+  },
+  "skill:outputSchema": {
+    "type": "object",
+    "properties": {
+      "image_path": {"type": "string"},
+      "prompt_id": {"type": "string"}
+    }
+  },
+  "skill:tags": ["inpaint", "mask", "editing", "comfyui"],
+  "skill:dependencies": ["build_i2i_workflow", "submit_workflow"]
+}

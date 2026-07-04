@@ -1,0 +1,37 @@
+{
+  "@context": {
+    "schema": "https://schema.org/",
+    "skill": "https://agent-harness.os/skill#"
+  },
+  "@id": "iri://skills/comfyui/upscale",
+  "@type": ["skill:Skill", "skill:Atomic", "iri://skill-types/ImageUpscale"],
+  "schema:name": "upscale",
+  "schema:description": "使用 ESRGAN 或 latent 放大模型提升图片分辨率",
+  "skill:version": "1.0.0",
+  "skill:category": "postprocess",
+  "skill:securityLevel": "normal",
+  "skill:allowedRoles": ["DA"],
+  "skill:inputSchema": {
+    "type": "object",
+    "properties": {
+      "image": {"type": "string", "description": "输入图片路径"},
+      "upscale_model": {"type": "string", "default": "RealESRGAN_x4plus.pth", "description": "放大模型名称"},
+      "upscale_factor": {"type": "number", "default": 4.0, "description": "放大倍数"},
+      "use_latent_upscale": {"type": "boolean", "default": false, "description": "使用 latent 放大（更高质量）"},
+      "steps": {"type": "integer", "default": 15, "description": "latent 放大时的采样步数"},
+      "cfg": {"type": "number", "default": 5.0},
+      "sampler": {"type": "string", "default": "dpmpp_2m"},
+      "scheduler": {"type": "string", "default": "karras"}
+    },
+    "required": ["image"]
+  },
+  "skill:outputSchema": {
+    "type": "object",
+    "properties": {
+      "image_path": {"type": "string"},
+      "prompt_id": {"type": "string"}
+    }
+  },
+  "skill:tags": ["upscale", "hd", "esrgan", "comfyui"],
+  "skill:dependencies": ["submit_workflow"]
+}
