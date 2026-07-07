@@ -195,11 +195,29 @@ impl Default for SdCppConfig {
 }
 
 impl SdCppConfig {
-    /// 从环境变量创建配置
     pub fn from_env() -> Self {
-        let mut config = Self::default();
+        // 优先级：环境变量 > config.json > 硬编码默认
+        // 节点层（KSampler 等）用 from_env()，不读 AppConfig，
+        // 所以在这里 fallback 到 config.json
+        let mut config = Self::load_from_config_file().unwrap_or_default();
+
+        if let Ok(val) = std::env::var("SD_CPP_EXECUTABLE") {
+            config.executable_path = val;
+        }
         if let Ok(val) = std::env::var("SD_CPP_MODEL_PATH") {
             config.model_path = val;
+        }
+        if let Ok(val) = std::env::var("SD_CPP_BACKEND") {
+            config.backend = val;
+        }
+        if let Ok(val) = std::env::var("SD_CPP_PRECISION") {
+            config.precision = val;
+        }
+        if let Ok(val) = std::env::var("SD_CPP_FLASH_ATTENTION") {
+            config.flash_attention = val == "true" || val == "1";
+        }
+        if let Ok(val) = std::env::var("SD_CPP_RNG_MODE") {
+            config.rng_mode = val;
         }
         if let Ok(val) = std::env::var("SD_CPP_OFFLOAD_CPU") {
             config.offload_to_cpu = val == "true" || val == "1";
@@ -220,6 +238,24 @@ impl SdCppConfig {
             }
         }
         config
+    }
+
+    fn load_from_config_file() -> Option<Self> {
+        #[derive(Deserialize)]
+        struct AppConfigShell {
+            #[serde(default)]
+            sd_cpp: Option<SdCppConfig>,
+        }
+
+        for path in &["config/config.json", "config.json"] {
+            let content = std::fs::read_to_string(path).ok()?;
+            if let Ok(cfg) = serde_json::from_str::<AppConfigShell>(&content) {
+                if cfg.sd_cpp.is_some() {
+                    return cfg.sd_cpp;
+                }
+            }
+        }
+        None
     }
 
     /// 从配置文件加载
@@ -777,46 +813,156 @@ impl StableDiffusionCppBackend {
         }
     }
 
+    async fn run_sd_cli_text_to_image(&self, params: &T2IParams) -> Result<Vec<u8>, SdError> {
+        if self.config.executable_path.is_empty() {
+            return Err(SdError::ConfigurationError(
+                "executable_path is not configured".to_string()
+            ));
+        }
+        if self.config.model_path.is_empty() {
+            return Err(SdError::ConfigurationError(
+                "model_path is not configured".to_string()
+            ));
+        }
+        let output_path = format!(
+            "/tmp/sd_output_{}.png",
+            uuid::Uuid::new_v4()
+        );
+
+        let executable = &self.config.executable_path;
+        let model = &self.config.model_path;
+
+        let mut cmd = std::process::Command::new(executable);
+        cmd.arg("--model").arg(model)
+            .arg("--prompt").arg(&params.prompt)
+            .arg("--output").arg(&output_path)
+            .arg("--backend").arg(&self.config.backend)
+            .arg("--rng").arg(&self.config.rng_mode)
+            .arg("--steps").arg(params.steps.to_string())
+            .arg("--cfg-scale").arg(params.cfg.to_string())
+            .arg("--width").arg(params.width.to_string())
+            .arg("--height").arg(params.height.to_string())
+            .arg("--seed").arg(params.seed.to_string());
+
+        if !params.negative_prompt.is_empty() {
+            cmd.arg("--negative-prompt").arg(&params.negative_prompt);
+        }
+
+        // sd-cli doesn't support standalone --flash-attention flag;
+        // flash attention is compiled in via GGML_CUDA_FA cmake option.
+        // Add any model-specific args here if needed.
+
+        info!("Running sd-cli: {} --model {} --backend {} --steps {} --width {}x{}",
+            executable, model, self.config.backend, params.steps, params.width, params.height);
+
+        let output = cmd.output().map_err(|e| {
+            SdError::ProcessStartFailed(format!("Failed to run sd-cli: {}", e))
+        })?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(SdError::ExecutionFailed(format!(
+                "sd-cli failed (exit={}): {}",
+                output.status.code().unwrap_or(-1),
+                stderr.lines().next().unwrap_or("unknown error")
+            )));
+        }
+
+        let image_data = std::fs::read(&output_path).map_err(|e| {
+            SdError::IoError(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                format!("Failed to read sd-cli output '{}': {}", output_path, e),
+            ))
+        })?;
+
+        // 清理临时文件
+        let _ = std::fs::remove_file(&output_path);
+
+        Ok(image_data)
+    }
+
     /// 文生图
     pub async fn text_to_image(&self, params: T2IParams) -> Result<Vec<u8>, SdError> {
         let _permit = self.semaphore.acquire().await.map_err(|e| {
             SdError::ResourceLimitExceeded(format!("Failed to acquire semaphore: {}", e))
         })?;
 
-        let request = SdRequest {
-            mode: "text_to_image".to_string(),
-            prompt: params.prompt,
-            negative_prompt: params.negative_prompt,
-            width: params.width,
-            height: params.height,
-            steps: params.steps,
-            cfg: params.cfg,
-            sampler: params.sampler,
-            seed: params.seed,
-            model_path: params.model_path,
-            input_image: None,
-            controlnet: None,
-            denoise: None,
-            request_id: Some(uuid::Uuid::new_v4().to_string()),
-        };
+        // 使用直接子进程调用（sd-cli 不支持 stdin/stdout 协议）
+        self.run_sd_cli_text_to_image(&params).await
+    }
 
-        let mut pm = self.process_manager.lock().await;
-        let response = pm.execute_request(&request)?;
-
-        if !response.is_success() {
-            return Err(SdError::ExecutionFailed(
-                response.error.unwrap_or_else(|| "Unknown error".to_string())
+    async fn run_sd_cli_image_to_image(&self, params: &I2IParams) -> Result<Vec<u8>, SdError> {
+        if self.config.executable_path.is_empty() {
+            return Err(SdError::ConfigurationError(
+                "executable_path is not configured".to_string()
             ));
         }
+        if self.config.model_path.is_empty() {
+            return Err(SdError::ConfigurationError(
+                "model_path is not configured".to_string()
+            ));
+        }
+        let output_path = format!(
+            "/tmp/sd_output_{}.png",
+            uuid::Uuid::new_v4()
+        );
 
-        // 读取输出文件
-        let image_data = std::fs::read(&response.output_path).map_err(|e| {
+        // 将输入图像写入临时文件（sd-cli 的 --image 接受路径）
+        let input_path = format!("/tmp/sd_input_{}.png", uuid::Uuid::new_v4());
+        std::fs::write(&input_path, &params.input_image).map_err(|e| {
             SdError::IoError(std::io::Error::new(
-                std::io::ErrorKind::NotFound,
-                format!("Failed to read output '{}': {}", response.output_path, e),
+                std::io::ErrorKind::Other,
+                format!("Failed to write input image: {}", e),
             ))
         })?;
 
+        let executable = &self.config.executable_path;
+        let model = &self.config.model_path;
+
+        let mut cmd = std::process::Command::new(executable);
+        cmd.arg("--model").arg(model)
+            .arg("--prompt").arg(&params.prompt)
+            .arg("--image").arg(&input_path)
+            .arg("--output").arg(&output_path)
+            .arg("--backend").arg(&self.config.backend)
+            .arg("--rng").arg(&self.config.rng_mode)
+            .arg("--steps").arg(params.steps.to_string())
+            .arg("--cfg-scale").arg(params.cfg.to_string())
+            .arg("--width").arg("512")
+            .arg("--height").arg("512")
+            .arg("--seed").arg(params.seed.to_string());
+
+        if !params.negative_prompt.is_empty() {
+            cmd.arg("--negative-prompt").arg(&params.negative_prompt);
+        }
+
+        info!("Running sd-cli img2img: {} --backend {} --steps {} --denoise {}",
+            executable, self.config.backend, params.steps, params.denoise);
+
+        let output = cmd.output().map_err(|e| {
+            SdError::ProcessStartFailed(format!("Failed to run sd-cli: {}", e))
+        })?;
+
+        // 清理输入临时文件
+        let _ = std::fs::remove_file(&input_path);
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(SdError::ExecutionFailed(format!(
+                "sd-cli img2img failed (exit={}): {}",
+                output.status.code().unwrap_or(-1),
+                stderr.lines().next().unwrap_or("unknown error")
+            )));
+        }
+
+        let image_data = std::fs::read(&output_path).map_err(|e| {
+            SdError::IoError(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                format!("Failed to read sd-cli output '{}': {}", output_path, e),
+            ))
+        })?;
+
+        let _ = std::fs::remove_file(&output_path);
         Ok(image_data)
     }
 
@@ -826,37 +972,8 @@ impl StableDiffusionCppBackend {
             SdError::ResourceLimitExceeded(format!("Failed to acquire semaphore: {}", e))
         })?;
 
-        // 将输入图像转为base64
-        let input_image_b64 = base64_encode(&params.input_image);
-
-        let request = SdRequest {
-            mode: "image_to_image".to_string(),
-            prompt: params.prompt,
-            negative_prompt: params.negative_prompt,
-            width: 512,
-            height: 512,
-            steps: params.steps,
-            cfg: params.cfg,
-            sampler: "euler".to_string(),
-            seed: params.seed,
-            model_path: params.model_path,
-            input_image: Some(input_image_b64),
-            controlnet: None,
-            denoise: Some(params.denoise),
-            request_id: Some(uuid::Uuid::new_v4().to_string()),
-        };
-
-        let mut pm = self.process_manager.lock().await;
-        let response = pm.execute_request(&request)?;
-
-        if !response.is_success() {
-            return Err(SdError::ExecutionFailed(
-                response.error.unwrap_or_else(|| "Unknown error".to_string())
-            ));
-        }
-
-        let image_data = std::fs::read(&response.output_path)?;
-        Ok(image_data)
+        // 使用直接子进程调用（sd-cli 不支持 stdin/stdout 协议）
+        self.run_sd_cli_image_to_image(&params).await
     }
 
     /// 文生视频
@@ -907,10 +1024,20 @@ impl StableDiffusionCppBackend {
         pm.stop()
     }
 
-    /// 健康检查
     pub async fn health_check(&self) -> Result<bool, SdError> {
-        let mut pm = self.process_manager.lock().await;
-        pm.health_check()
+        if self.config.executable_path.is_empty() {
+            return Ok(false);
+        }
+        let exe = self.config.executable_path.clone();
+        let result = tokio::task::spawn_blocking(move || {
+            std::process::Command::new(&exe)
+                .arg("--help")
+                .output()
+        })
+        .await
+        .map_err(|e| SdError::ProcessStartFailed(format!("Health check join: {}", e)))?
+        .map_err(|e| SdError::ProcessStartFailed(format!("Health check failed: {}", e)))?;
+        Ok(result.status.success())
     }
 
     /// 获取统计信息

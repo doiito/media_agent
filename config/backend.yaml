@@ -4,27 +4,26 @@
 # stable-diffusion.cpp 后端配置
 sd_cpp:
   # sd-cli 可执行文件路径
-  executable_path: "/dev-data/ai-test/stable-diffusion.cpp/build/bin/sd-cli"
+  executable_path: "/usr/local/bin/sd-cli"
   
   # 模型文件路径（SD1.5）
   model_path: "/dev-data/ai-test/media_agent/models/checkpoints/v1-5-pruned-emaonly.safetensors"
   
   # 计算后端 (cuda/vulkan/cpu)
-  # 如果没有 GPU，使用 cpu
-  backend: "cpu"
+  backend: "cuda"
   
   # 精度设置 (f32/f16/q4_0/q5_0/q8_0)
-  # CPU 后端推荐 f32
-  precision: "f32"
+  # GPU 推荐 f16
+  precision: "f16"
   
   # Flash Attention
-  flash_attention: false
+  flash_attention: true
   
   # 是否将部分层卸载到 CPU
   offload_to_cpu: false
   
   # RNG 模式 (cuda/cpu)
-  rng_mode: "cpu"
+  rng_mode: "cuda"
   
   # 超时时间（秒）- 图片生成可能需要较长时间
   timeout_secs: 300

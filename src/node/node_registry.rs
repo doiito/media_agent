@@ -334,14 +334,17 @@ impl NodeRegistry {
             display_name: "视频合成".to_string(),
             category: "视频".to_string(),
             inputs: vec![
-                NodePort { name: "frames".into(), data_kind: DataKind::FRAMES, required: true, default: None, description: "帧序列".into() },
-                NodePort { name: "fps".into(), data_kind: DataKind::INT, required: false, default: Some(serde_json::json!(6)), description: "帧率".into() },
-                NodePort { name: "format".into(), data_kind: DataKind::STRING, required: false, default: Some(serde_json::json!("mp4")), description: "视频格式".into() },
+                NodePort { name: "images".into(), data_kind: DataKind::IMAGE, required: false, default: None, description: "图像数据（可选，不提供则扫描 output/ 目录）".into() },
+                NodePort { name: "frame_rate".into(), data_kind: DataKind::INT, required: false, default: Some(serde_json::json!(8)), description: "帧率".into() },
+                NodePort { name: "format".into(), data_kind: DataKind::STRING, required: false, default: Some(serde_json::json!("mp4")), description: "视频格式 (mp4/gif/webm/avi/mov)".into() },
+                NodePort { name: "codec".into(), data_kind: DataKind::STRING, required: false, default: Some(serde_json::json!("h264")), description: "编码器 (h264/h265/vp8/vp9/gif/raw)".into() },
+                NodePort { name: "quality".into(), data_kind: DataKind::FLOAT, required: false, default: Some(serde_json::json!(20.0)), description: "编码质量 (1-51, 越低越好)".into() },
+                NodePort { name: "filename_prefix".into(), data_kind: DataKind::STRING, required: false, default: Some(serde_json::json!("video")), description: "输出文件名前缀".into() },
             ],
             outputs: vec![
-                NodePort { name: "VIDEO".into(), data_kind: DataKind::VIDEO, required: true, default: None, description: "视频文件".into() },
+                NodePort { name: "filename".into(), data_kind: DataKind::STRING, required: true, default: None, description: "输出视频文件路径".into() },
             ],
-            description: "将帧序列合成为视频文件".into(),
+            description: "将帧序列或 output/ 目录中的 PNG 文件合成为视频文件".into(),
         });
         
         specs.insert("FrameInterpolation".to_string(), NodeSpec {

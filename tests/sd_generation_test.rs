@@ -4,6 +4,7 @@
 use comfyui_rust_agent::backend::{
     SdCppConfig, StableDiffusionCppBackend, T2IParams, I2IParams
 };
+use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 use std::fs;
 
@@ -175,4 +176,44 @@ fn test_sd_cli_direct_execution() {
     
     // 检查前置条件
     if !Path::new(sd_cli_path).exists() {
-        println!("sd-cli not fou
+        println!("sd-cli not found, skipping test");
+        return;
+    }
+    
+    // 检查模型文件
+    if !Path::new(&model_path).exists() {
+        println!("Model not found at {}, skipping test", model_path);
+        return;
+    }
+    
+    fs::create_dir_all(output_dir).ok();
+    
+    let output_path = format!("{}/cli_test_output.png", output_dir);
+    
+    let output = std::process::Command::new(sd_cli_path)
+        .args(&[
+            "--model", &model_path,
+            "--prompt", "a cute cat",
+            "--output", &output_path,
+            "--steps", "10",
+            "--cfg-scale", "7.0",
+            "--sampler", "euler",
+            "--seed", "42",
+        ])
+        .output();
+    
+    match output {
+        Ok(out) => {
+            if out.status.success() {
+                assert!(Path::new(&output_path).exists(), "Output file not created");
+                println!("CLI execution successful");
+            } else {
+                let stderr = String::from_utf8_lossy(&out.stderr);
+                println!("CLI execution failed: {}", stderr);
+            }
+        }
+        Err(e) => {
+            println!("Failed to execute sd-cli: {:?}", e);
+        }
+    }
+}

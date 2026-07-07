@@ -77,7 +77,9 @@ impl AgentEngine {
     /// - Ok(supervisor): 构建成功
     /// - Err(String): 缺少必要组件或构建失败
     pub fn build_supervisor(&mut self) -> Result<(), String> {
-        // 检查必要组件
+        if !self.context.is_ready() {
+            self.init_gliding_horse_components()?;
+        }
         if !self.context.is_ready() {
             return Err("AgentContext not ready: missing gateway/memory/skills".to_string());
         }
@@ -215,6 +217,91 @@ impl AgentEngine {
             "sa" => "You are the Supervisor Agent (SA) for ComfyUI Rust Agent. Coordinate PA, DA, CA, AA agents to complete image/video generation tasks using PDCA cycle. Output JSON-formatted results.",
             _ => "",
         }
+    }
+
+    /// 从环境变量初始化 gliding_horse 组件（gateway, memory, skills, runner）
+    fn init_gliding_horse_components(&mut self) -> Result<(), String> {
+        let api_key = std::env::var("DEEPSEEK_API_KEY")
+            .or_else(|_| std::env::var("AGENT_OS_GATEWAY_API_KEY"))
+            .map_err(|_| "DEEPSEEK_API_KEY or AGENT_OS_GATEWAY_API_KEY not set".to_string())?;
+        let base_url = std::env::var("DEEPSEEK_API_URL")
+            .or_else(|_| std::env::var("AGENT_OS_GATEWAY_API_URL"))
+            .unwrap_or_else(|_| "https://api.deepseek.com/v1".to_string());
+        let default_model = std::env::var("DEEPSEEK_MODEL")
+            .or_else(|_| std::env::var("AGENT_OS_GATEWAY_DEFAULT_MODEL"))
+            .unwrap_or_else(|_| "deepseek-v4-flash".to_string());
+
+        let gateway_settings = glidinghorse::config::settings::GatewaySettings {
+            base_url,
+            api_key,
+            default_model,
+            timeout_seconds: 120,
+            max_retries: 3,
+            model_mapping: std::collections::HashMap::new(),
+        };
+        let gateway = Arc::new(
+            glidinghorse::gateway::UnifiedGateway::new(&gateway_settings)
+                .map_err(|e| format!("Failed to create UnifiedGateway: {:?}", e))?
+        );
+
+        let data_dir = self.config.as_ref()
+            .map(|c| PathBuf::from(&c.paths.temp_dir).join("agent_memory"))
+            .unwrap_or_else(|| PathBuf::from("/tmp/agent_memory"));
+        std::fs::create_dir_all(&data_dir)
+            .map_err(|e| format!("Failed to create memory dir: {}", e))?;
+
+        let l0_store = Arc::new(
+            glidinghorse::memory::L0Store::new(
+                data_dir.to_str().ok_or("Invalid memory path")?
+            ).map_err(|e| format!("Failed to create L0Store: {:?}", e))?
+        );
+        let blackboard = Arc::new(
+            glidinghorse::memory::Blackboard::new()
+                .map_err(|e| format!("Failed to create Blackboard: {:?}", e))?
+        );
+
+        let skill_registry = Arc::new(glidinghorse::tools::SkillRegistry::new());
+        let skills_dir = self.config.as_ref()
+            .map(|c| PathBuf::from(&c.paths.skills_dir))
+            .unwrap_or_else(|| PathBuf::from("skills"));
+        if skills_dir.exists() {
+            let _ = skill_registry.load_from_jsonld(&skills_dir);
+        }
+
+        let projection = Arc::new(glidinghorse::memory::ProjectionEngine::new(blackboard.clone(), 500));
+        let core_config = glidinghorse::core::CoreConfig::default();
+        let memory_manager = Arc::new(tokio::sync::Mutex::new(
+            glidinghorse::memory::MemoryManager::new(
+                l0_store.clone(), blackboard.clone(), projection, core_config)
+        ));
+        let templates_dir = self.config.as_ref()
+            .map(|c| PathBuf::from(&c.paths.prompts_dir))
+            .unwrap_or_else(|| PathBuf::from("prompts"));
+        std::fs::create_dir_all(&templates_dir)
+            .map_err(|e| format!("Failed to create prompts dir: {}", e))?;
+        let templates = Arc::new(
+            glidinghorse::templates::TemplateEngine::new(&templates_dir)
+                .map_err(|e| format!("Failed to init TemplateEngine: {:?}", e))?
+        );
+
+        let agent_runner = Arc::new(glidinghorse::core::AgentRunner::new(
+            gateway.clone(),
+            skill_registry.clone(),
+            blackboard.clone(),
+            l0_store.clone(),
+            memory_manager,
+            templates,
+            glidinghorse::config::AgentSettings::default(),
+        ));
+
+        self.context = self.context.clone()
+            .with_gateway(gateway)
+            .with_memory(l0_store, blackboard)
+            .with_skills(skill_registry)
+            .with_runner(agent_runner);
+
+        log::info!("gliding_horse components initialized from env (model: {}, url: {})", gateway_settings.default_model, gateway_settings.base_url);
+        Ok(())
     }
 
     /// 处理用户任务（自然语言对话）

@@ -43,10 +43,12 @@ pub struct WorkflowNode {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum InputValue {
+    /// 连接到其他节点的输出 [源节点id, 输出索引]
+    /// Must be ordered BEFORE Direct(Value) since serde(untagged) tries variants
+    /// in declaration order and Value::Array matches before Link([String;2]).
+    Link([String; 2]),
     /// 直接值
     Direct(Value),
-    /// 连接到其他节点的输出 [源节点id, 输出索引]
-    Link([String; 2]),
 }
 
 /// 数据类型枚举

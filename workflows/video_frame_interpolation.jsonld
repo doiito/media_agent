@@ -36,6 +36,19 @@
         "filename_prefix": "interpolated_"
       },
       "outputs": ["saved_paths"]
+    },
+    {
+      "@type": "WorkflowStep",
+      "name": "combine_video",
+      "action": "VideoCombine",
+      "inputs": {
+        "filename_prefix": "interpolated_",
+        "frame_rate": 8,
+        "format": "mp4",
+        "codec": "h264",
+        "quality": 23
+      },
+      "outputs": ["video_path"]
     }
   ],
   "parameters": {

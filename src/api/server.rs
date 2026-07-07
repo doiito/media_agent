@@ -238,12 +238,13 @@ async fn log_requests(
 
 /// 提供静态文件服务
 async fn serve_static(
-    axum::extract::Path(path): axum::extract::Path<String>,
+    uri: axum::http::Uri,
 ) -> axum::response::Response {
+    let path = uri.path().trim_start_matches('/');
     let file_path = if path.is_empty() {
         std::path::PathBuf::from("web/index.html")
     } else {
-        std::path::PathBuf::from("web").join(&path)
+        std::path::PathBuf::from("web").join(path)
     };
 
     if !file_path.exists() {

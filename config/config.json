@@ -1,0 +1,36 @@
+{
+  "server": {
+    "host": "0.0.0.0",
+    "port": 8188,
+    "max_workflows": 10
+  },
+  "sd_cpp": {
+    "executable_path": "/usr/local/bin/sd-cli",
+    "model_path": "/dev-data/ai-test/media_agent/models/checkpoints/v1-5-pruned-emaonly.safetensors",
+    "backend": "cuda",
+    "precision": "f16",
+    "flash_attention": true,
+    "rng_mode": "cuda",
+    "timeout_secs": 300,
+    "max_retries": 2,
+    "max_concurrent_tasks": 1,
+    "max_queue_size": 10,
+    "health_check_interval": 30,
+    "idle_timeout_secs": 60,
+    "circuit_breaker_threshold": 3,
+    "circuit_breaker_reset_secs": 60,
+    "output_dir": "/dev-data/ai-test/media_agent/output"
+  },
+  "log": {
+    "level": "info"
+  },
+  "paths": {
+    "models_dir": "/dev-data/ai-test/media_agent/models",
+    "output_dir": "/dev-data/ai-test/media_agent/output",
+    "temp_dir": "/dev-data/ai-test/media_agent/temp"
+  },
+  "monitor": {
+    "enabled": true,
+    "collect_interval_secs": 10
+  }
+}

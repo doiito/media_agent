@@ -7,6 +7,7 @@ use crate::backend::BackendRouter;
 use crate::execution::cache::HierarchicalCache;
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::Mutex as StdMutex;
 use tokio::sync::Mutex;
 
 /// Prompt执行器
@@ -18,7 +19,7 @@ pub struct PromptExecutor {
     /// 缓存系统
     cache: HierarchicalCache,
     /// 是否中断
-    interrupted: Arc<Mutex<bool>>,
+    interrupted: Arc<StdMutex<bool>>,
 }
 
 impl PromptExecutor {
@@ -27,7 +28,7 @@ impl PromptExecutor {
             node_registry: Arc::new(NodeRegistry::new()),
             backend_router: Arc::new(Mutex::new(BackendRouter::new())),
             cache: HierarchicalCache::new(),
-            interrupted: Arc::new(Mutex::new(false)),
+            interrupted: Arc::new(StdMutex::new(false)),
         }
     }
 
@@ -52,7 +53,7 @@ impl PromptExecutor {
         // 4. 逐节点执行
         for node_id in execution_order {
             // 检查是否中断
-            if *self.interrupted.lock().await {
+            if *self.interrupted.lock().unwrap() {
                 return Ok(ExecutionResult::Failure("Interrupted".to_string()));
             }
 
@@ -69,8 +70,18 @@ impl PromptExecutor {
             let inputs = self.prepare_inputs(node, &outputs)?;
 
             // 执行节点
-            let node_instance = self.node_registry.create_node(&node.class_type)?;
-            let result = node_instance.lock().await.execute(inputs).await?;
+            let node_instance = match self.node_registry.create_node(&node.class_type) {
+                Ok(n) => n,
+                Err(e) => {
+                    return Ok(ExecutionResult::Failure(format!("Node creation failed: {}", e)));
+                }
+            };
+            let result = match node_instance.lock().await.execute(inputs).await {
+                Ok(r) => r,
+                Err(e) => {
+                    return Ok(ExecutionResult::Failure(format!("Node '{}' execution failed: {}", node_id, e)));
+                }
+            };
 
             // 存储输出
             outputs.insert(node_id.clone(), result.clone());
@@ -147,7 +158,7 @@ impl PromptExecutor {
 
     /// 中断当前执行
     pub fn interrupt(&mut self) {
-        let mut interrupted = self.interrupted.blocking_lock();
+        let mut interrupted = self.interrupted.lock().unwrap();
         *interrupted = true;
     }
 

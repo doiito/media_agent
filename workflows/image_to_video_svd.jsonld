@@ -58,6 +58,19 @@
         "filename_prefix": "video_frame_"
       },
       "outputs": ["saved_paths"]
+    },
+    {
+      "@type": "WorkflowStep",
+      "name": "combine_video",
+      "action": "VideoCombine",
+      "inputs": {
+        "filename_prefix": "video_frame_",
+        "frame_rate": "${fps}",
+        "format": "mp4",
+        "codec": "h264",
+        "quality": 23
+      },
+      "outputs": ["video_path"]
     }
   ],
   "parameters": {

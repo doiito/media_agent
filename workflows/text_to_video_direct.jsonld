@@ -83,6 +83,19 @@
         "filename_prefix": "t2v_frame_"
       },
       "outputs": ["saved_paths"]
+    },
+    {
+      "@type": "WorkflowStep",
+      "name": "combine_video",
+      "action": "VideoCombine",
+      "inputs": {
+        "filename_prefix": "t2v_frame_",
+        "frame_rate": "${fps}",
+        "format": "mp4",
+        "codec": "h264",
+        "quality": 23
+      },
+      "outputs": ["video_path"]
     }
   ],
   "parameters": {
@@ -97,6 +110,7 @@
     "seed": { "type": "integer", "default": -1 },
     "animation_type": { "type": "string", "default": "motion", "enum": ["motion", "zoom", "pan", "rotate"] },
     "motion_strength": { "type": "float", "default": 0.5 },
-    "output_directory": { "type": "string", "default": "output/text_to_video" }
+    "output_directory": { "type": "string", "default": "output/text_to_video" },
+    "fps": { "type": "integer", "default": 8 }
   }
 }

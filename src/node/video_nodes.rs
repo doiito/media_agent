@@ -490,7 +490,7 @@ impl Node for VideoCombineNode {
         HashMap::from([
             ("images".to_string(), InputType {
                 data_type: DataType::IMAGE,
-                required: true,
+                required: false,
                 default: None,
                 choices: None,
             }),
@@ -551,8 +551,6 @@ impl Node for VideoCombineNode {
     }
 
     async fn execute(&mut self, inputs: HashMap<String, Value>) -> Result<HashMap<String, Value>, Error> {
-        let _images = inputs.get("images")
-            .ok_or_else(|| Error::ExecutionFailed("Missing images".to_string()))?;
         let frame_rate = inputs.get("frame_rate")
             .unwrap_or(&Value::Int(8))
             .as_int()?;
@@ -572,15 +570,152 @@ impl Node for VideoCombineNode {
         info!("Combining video: format={}, codec={}, fps={}, quality={}, prefix={}",
               format, codec, frame_rate, quality, filename_prefix);
 
+        let output_dir = "output";
+        let _ = std::fs::create_dir_all(output_dir);
+
+        let mut frames: Vec<std::path::PathBuf> = Vec::new();
+
+        // If images contains direct pixel data, write as PPM files (ffmpeg-native)
+        if let Some(Value::Image(pixels)) = inputs.get("images") {
+            if !pixels.is_empty() && pixels.len() >= 3 {
+                info!("Received {} bytes of image data, writing temp frames", pixels.len());
+                let timestamp = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_millis())
+                    .unwrap_or(0);
+                let temp_dir = std::path::Path::new(output_dir).join(format!("tmp_vc_{}", timestamp));
+                std::fs::create_dir_all(&temp_dir)
+                    .map_err(|e| Error::IoError(e))?;
+                // Try width input, or calculate from pixel count
+                let px_count = pixels.len() / 3;
+                let frame_w = match inputs.get("width").and_then(|v| v.as_int().ok()) {
+                    Some(w) if w >= 2 => w as usize,
+                    _ => {
+                        let w = (px_count as f64).sqrt().ceil() as usize;
+                        if w < 2 { 2 } else if w % 2 != 0 { w + 1 } else { w }
+                    }
+                };
+                let full_rows = pixels.len() / (frame_w * 3);
+                let frame_h = if full_rows > 0 { full_rows } else { 1 };
+                let expected_size = frame_w * frame_h * 3;
+                let mut data = pixels.clone();
+                if data.len() < expected_size {
+                    data.resize(expected_size, 0);
+                }
+                let ppm_path = temp_dir.join(format!("{}_data.ppm", filename_prefix));
+                use std::io::Write;
+                let mut f = std::fs::File::create(&ppm_path)
+                    .map_err(|e| Error::IoError(e))?;
+                write!(f, "P6\n{} {}\n255\n", frame_w, frame_h)
+                    .map_err(|e| Error::IoError(e))?;
+                f.write_all(&data[..expected_size]).map_err(|e| Error::IoError(e))?;
+                frames.push(ppm_path);
+                info!("Wrote PPM: {}x{} ({} bytes)", frame_w, frame_h, expected_size);
+            }
+        }
+
+        // Fallback: scan filesystem for existing PNGs matching the prefix
+        if frames.is_empty() {
+            let dir = std::path::Path::new(output_dir);
+            if dir.exists() {
+                for entry in std::fs::read_dir(dir).map_err(|e| Error::IoError(e))? {
+                    let entry = entry.map_err(|e| Error::IoError(e))?;
+                    let path = entry.path();
+                    if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+                        if name.starts_with(filename_prefix) && name.ends_with(".png") {
+                            frames.push(path);
+                        }
+                    }
+                }
+            }
+        }
+
+        if frames.is_empty() {
+            return Err(Error::ExecutionFailed(format!(
+                "No frames found matching prefix '{}' in output/", filename_prefix
+            )));
+        }
+
+        frames.sort();
+
+        info!("Found {} frames for video encoding", frames.len());
+
         // 生成输出文件名
         let timestamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_millis())
             .unwrap_or(0);
         let output_filename = format!("{}_{}.{}", filename_prefix, timestamp, format);
+        let output_path = std::path::Path::new(output_dir).join(&output_filename);
 
-        // 实际实现需要调用 ffmpeg 进行视频合成
-        // 这里返回元数据
+        // 写入临时帧列表文件（给 ffmpeg concat 使用）
+        let list_path = format!("/tmp/video_concat_{}.txt", timestamp);
+        {
+            let mut list_file = std::fs::File::create(&list_path)
+                .map_err(|e| Error::IoError(e))?;
+            use std::io::Write;
+            for frame in &frames {
+                let abs_path = frame.canonicalize()
+                    .unwrap_or_else(|_| frame.clone());
+                writeln!(list_file, "file '{}'", abs_path.display())
+                    .map_err(|e| Error::IoError(e))?;
+            }
+        }
+
+        let codec_arg = match format {
+            "gif" => "gif",
+            "webm" | "avi" | "mov" => match codec {
+                "h264" => "libx264",
+                "h265" => "libx265",
+                "vp8" => "libvpx",
+                "vp9" => "libvpx-vp9",
+                "gif" => "gif",
+                _ => "libx264",
+            },
+            _ => "libx264",
+        };
+
+        let mut cmd = std::process::Command::new("ffmpeg");
+        cmd.args(["-y", "-f", "concat", "-safe", "0"]);
+        cmd.arg("-i").arg(&list_path);
+        cmd.arg("-r").arg(&frame_rate.to_string());
+
+        if format != "gif" {
+            cmd.args(["-c:v", codec_arg]);
+            cmd.args(["-pix_fmt", "yuv420p"]);
+            cmd.args(["-preset", "medium"]);
+            cmd.args(["-crf", &quality.to_string()]);
+        }
+
+        cmd.arg(&output_path);
+
+        debug!("Running ffmpeg: {:?}", cmd);
+
+        let output = cmd.output()
+            .map_err(|e| Error::ExecutionFailed(format!("ffmpeg start failed: {}", e)))?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            let _ = std::fs::remove_file(&list_path);
+            let error_detail: String = stderr.lines()
+                .skip(1)
+                .filter(|l| l.contains("Error") || l.contains("error") || l.contains("Invalid") || l.starts_with('['))
+                .take(5)
+                .collect::<Vec<_>>()
+                .join(" | ");
+            return Err(Error::ExecutionFailed(format!(
+                "ffmpeg encoding failed: {} | cmd: {:?}", error_detail, cmd
+            )));
+        }
+
+        let _ = std::fs::remove_file(&list_path);
+
+        for frame in &frames {
+            let _ = std::fs::remove_file(frame);
+        }
+
+        info!("Video saved: {}", output_path.display());
+
         Ok(HashMap::from([
             ("filename".to_string(), Value::String(output_filename)),
             ("subfolder".to_string(), Value::String(String::new())),
@@ -1268,17 +1403,70 @@ mod tests {
     async fn test_video_combine() {
         let mut node = VideoCombineNode;
         let mut inputs = HashMap::new();
-        inputs.insert("images".to_string(), Value::Image(vec![128u8; 100]));
         inputs.insert("frame_rate".to_string(), Value::Int(8));
         inputs.insert("format".to_string(), Value::String("mp4".to_string()));
         inputs.insert("codec".to_string(), Value::String("h264".to_string()));
         inputs.insert("filename_prefix".to_string(), Value::String("test_video".to_string()));
+
+        let output_dir = std::path::Path::new("output");
+        let _ = std::fs::create_dir_all(output_dir);
+        let ffmpeg_status = std::process::Command::new("ffmpeg")
+            .args(["-y", "-f", "lavfi", "-i", "color=c=red:s=10x10:d=0.5",
+                   "-frames:v", "4", "output/test_video_%05d.png"])
+            .status()
+            .expect("ffmpeg should be installed for the test");
+        assert!(ffmpeg_status.success(), "ffmpeg frame generation failed");
 
         let result = node.execute(inputs).await.unwrap();
         assert!(result.contains_key("filename"));
         if let Value::String(filename) = &result["filename"] {
             assert!(filename.starts_with("test_video_"));
             assert!(filename.ends_with(".mp4"));
+        }
+
+        for entry in std::fs::read_dir(output_dir).unwrap() {
+            let path = entry.unwrap().path();
+            let name = path.file_name().unwrap().to_str().unwrap().to_string();
+            if name.starts_with("test_video_") {
+                let _ = std::fs::remove_file(&path);
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_video_combine_with_image_data() {
+        let mut node = VideoCombineNode;
+        let mut inputs = HashMap::new();
+        let pixels: Vec<u8> = (0..48).map(|i| (i * 10) as u8).collect();
+        inputs.insert("images".to_string(), Value::Image(pixels));
+        inputs.insert("frame_rate".to_string(), Value::Int(8));
+        inputs.insert("format".to_string(), Value::String("mp4".to_string()));
+        inputs.insert("codec".to_string(), Value::String("h264".to_string()));
+        inputs.insert("filename_prefix".to_string(), Value::String("test_vc_data".to_string()));
+
+        let result = node.execute(inputs).await.unwrap();
+        assert!(result.contains_key("filename"));
+        if let Value::String(filename) = &result["filename"] {
+            assert!(filename.starts_with("test_vc_data_"));
+            assert!(filename.ends_with(".mp4"));
+        }
+
+        let output_dir = std::path::Path::new("output");
+        if let Ok(entries) = std::fs::read_dir(output_dir) {
+            for entry in entries.flatten() {
+                let name = entry.file_name().to_str().unwrap().to_string();
+                if name.starts_with("test_vc_data_") || name.starts_with("tmp_vc_") {
+                    let _ = std::fs::remove_file(entry.path());
+                }
+            }
+        }
+        if let Ok(entries) = std::fs::read_dir(output_dir) {
+            for entry in entries.flatten() {
+                let name = entry.file_name().to_str().unwrap().to_string();
+                if name.starts_with("tmp_vc_") && entry.path().is_dir() {
+                    let _ = std::fs::remove_dir_all(entry.path());
+                }
+            }
         }
     }
 

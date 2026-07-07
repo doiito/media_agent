@@ -298,6 +298,54 @@ impl WorkflowValidator {
             },
         );
 
+        // LoadImage
+        nodes.insert(
+            "LoadImage".to_string(),
+            NodeDefinition {
+                class_type: "LoadImage".to_string(),
+                input_types: HashMap::from([
+                    ("image".to_string(), DataType::STRING),
+                ]),
+                output_types: HashMap::from([
+                    ("IMAGE".to_string(), DataType::IMAGE),
+                ]),
+                required_inputs: HashSet::from(["image".to_string()]),
+            },
+        );
+
+        // VAEEncode
+        nodes.insert(
+            "VAEEncode".to_string(),
+            NodeDefinition {
+                class_type: "VAEEncode".to_string(),
+                input_types: HashMap::from([
+                    ("pixels".to_string(), DataType::IMAGE),
+                    ("vae".to_string(), DataType::VAE),
+                ]),
+                output_types: HashMap::from([
+                    ("LATENT".to_string(), DataType::LATENT),
+                ]),
+                required_inputs: HashSet::from(["pixels".to_string(), "vae".to_string()]),
+            },
+        );
+
+        nodes.insert(
+            "VideoCombine".to_string(),
+            NodeDefinition {
+                class_type: "VideoCombine".to_string(),
+                input_types: HashMap::from([
+                    ("images".to_string(), DataType::IMAGE),
+                    ("frame_rate".to_string(), DataType::INT),
+                    ("format".to_string(), DataType::STRING),
+                    ("codec".to_string(), DataType::STRING),
+                    ("quality".to_string(), DataType::FLOAT),
+                    ("filename_prefix".to_string(), DataType::STRING),
+                ]),
+                output_types: HashMap::new(),
+                required_inputs: HashSet::new(),
+            },
+        );
+
         nodes
     }
 }

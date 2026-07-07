@@ -18,6 +18,10 @@ pub struct AgentChatRequest {
     pub workflow: Option<String>,
     pub max_iterations: Option<u32>,
     pub client_id: Option<String>,
+    /// 上传的图片路径（用于 img2img 工作流）
+    pub image_path: Option<String>,
+    /// 生成参数（steps, cfg, width, height 等）
+    pub params: Option<serde_json::Value>,
 }
 
 /// Agent 聊天响应
@@ -77,9 +81,16 @@ pub async fn agent_chat(
         }
     }
 
+    // 如果有上传图片，注入到消息中
+    let enhanced_message = if let Some(ref img_path) = req.image_path {
+        format!("[img: {}] {}", img_path, req.message)
+    } else {
+        req.message.clone()
+    };
+
     let result = {
         let mut agent_guard = agent.lock().await;
-        agent_guard.process_task(&req.message, req.workflow.as_deref()).await
+        agent_guard.process_task(&enhanced_message, req.workflow.as_deref()).await
     };
 
     match result {

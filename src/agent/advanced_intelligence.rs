@@ -399,7 +399,10 @@ impl ComfyUiIntelligence {
                 role_name: "DA".to_string(),
                 required_agent_role: Some("DA".to_string()),
             },
-            when: SkillTrigger::default(),
+            when: SkillTrigger {
+                applicable_phases: vec!["execution".to_string()],
+                ..Default::default()
+            },
             where_: SkillContext::default(),
             how: SkillApproach {
                 approach: def.category.clone(),
