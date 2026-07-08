@@ -225,6 +225,7 @@ function handleWSEvent(evt) {
     // Preview handled via binary blob messages
   } else if (type === 'ExecutionSuccess' || evt.ExecutionSuccess) {
     updateProgress(100, 'Complete!');
+    completeAgentStage('acting', true);
     setTimeout(finalizeProgress, 600);
   } else if (type === 'ExecutionError' || evt.ExecutionError) {
     const err = evt.ExecutionError || evt;
@@ -232,6 +233,18 @@ function handleWSEvent(evt) {
   } else if (type === 'Executing' || evt.Executing) {
     const ex = evt.Executing || evt;
     updateProgressLabel(ex.node ? 'Running: ' + ex.node : 'Processing…');
+  } else if (type === 'AgentPhaseStart' || evt.AgentPhaseStart) {
+    const d = evt.AgentPhaseStart || evt;
+    updateAgentStage(d.phase, d.description);
+  } else if (type === 'AgentPhaseComplete' || evt.AgentPhaseComplete) {
+    const d = evt.AgentPhaseComplete || evt;
+    completeAgentStage(d.phase, d.success);
+  } else if (type === 'AgentThought' || evt.AgentThought) {
+    const d = evt.AgentThought || evt;
+    appendAgentThought(d.thought, d.action);
+  } else if (type === 'AgentToolCall' || evt.AgentToolCall) {
+    const d = evt.AgentToolCall || evt;
+    appendToolCall(d.tool_name, d.status, d.result_summary);
   }
 }
 
@@ -278,12 +291,80 @@ function addProgressMsg(text) {
   div.className = 'msg agent';
   div.dataset.role = 'progress';
   div.innerHTML = `<div class="avatar">AI</div><div class="bubble">
-    <div class="progress-msg">${text}</div>
+    <div class="pdca-stages">
+      <div class="stage" data-phase="planning">
+        <span class="stage-icon">1</span><span class="stage-label">Planning</span>
+      </div>
+      <div class="stage-connector"></div>
+      <div class="stage" data-phase="doing">
+        <span class="stage-icon">2</span><span class="stage-label">Doing</span>
+      </div>
+      <div class="stage-connector"></div>
+      <div class="stage" data-phase="checking">
+        <span class="stage-icon">3</span><span class="stage-label">Checking</span>
+      </div>
+      <div class="stage-connector"></div>
+      <div class="stage" data-phase="acting">
+        <span class="stage-icon">4</span><span class="stage-label">Acting</span>
+      </div>
+    </div>
+    <div class="progress-msg">${escapeHtml(text)}</div>
     <div class="progress-bar"><div class="fill" style="width:0%"></div></div>
     <div class="progress-label" id="progLabel"></div>
+    <div class="agent-thoughts"></div>
+    <div class="tool-calls"></div>
   </div>`;
   chat.appendChild(div);
   state.currentTaskMsg = div;
+  scrollDown();
+}
+
+function updateAgentStage(phase, description) {
+  if (!state.currentTaskMsg) return;
+  const stages = state.currentTaskMsg.querySelectorAll('.stage');
+  stages.forEach(s => {
+    if (s.dataset.phase === phase) {
+      s.classList.add('active');
+      s.classList.remove('completed', 'failed');
+    }
+  });
+  if (description) {
+    updateProgressLabel(description);
+  }
+}
+
+function completeAgentStage(phase, success) {
+  if (!state.currentTaskMsg) return;
+  const stage = state.currentTaskMsg.querySelector(`.stage[data-phase="${phase}"]`);
+  if (stage) {
+    stage.classList.remove('active');
+    stage.classList.add(success ? 'completed' : 'failed');
+  }
+}
+
+function appendAgentThought(thought, action) {
+  if (!state.currentTaskMsg || !thought) return;
+  const container = state.currentTaskMsg.querySelector('.agent-thoughts');
+  if (!container) return;
+  const div = document.createElement('div');
+  div.className = 'agent-thought';
+  const actionLabel = action ? `<span class="thought-action">${escapeHtml(action)}</span> ` : '';
+  div.innerHTML = `${actionLabel}<span class="thought-text">${escapeHtml(thought)}</span>`;
+  container.appendChild(div);
+  scrollDown();
+}
+
+function appendToolCall(toolName, status, summary) {
+  if (!state.currentTaskMsg || !toolName) return;
+  const container = state.currentTaskMsg.querySelector('.tool-calls');
+  if (!container) return;
+  const div = document.createElement('div');
+  div.className = 'tool-call ' + (status || '');
+  const statusIcon = status === 'completed' ? '✓' : status === 'failed' ? '✗' : '⏳';
+  div.innerHTML = `<span class="tool-status">${statusIcon}</span>
+    <span class="tool-name">${escapeHtml(toolName)}</span>
+    ${summary ? `<span class="tool-summary">${escapeHtml(summary)}</span>` : ''}`;
+  container.appendChild(div);
   scrollDown();
 }
 

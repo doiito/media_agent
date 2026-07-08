@@ -4,7 +4,7 @@
 use crate::backend::{
     BackendType, StableDiffusionCppBackend, LlamaCppBackend,
     SdCppConfig, LlamaCppConfig,
-    T2IParams, I2IParams, T2VParams,
+    T2IParams, I2IParams, T2VParams, I2VParams,
 };
 use crate::types::*;
 use std::sync::Arc;
@@ -90,6 +90,17 @@ impl BackendRouter {
 
         backend.text_to_video(params).await.map_err(|e| {
             Error::BackendError(format!("T2V failed: {}", e))
+        })
+    }
+
+    /// 图生视频（SVD）
+    pub async fn image_to_video(&self, params: I2VParams) -> Result<Vec<u8>, Error> {
+        let backend = self.sd_cpp.as_ref().ok_or_else(|| {
+            Error::BackendError("stable-diffusion.cpp backend not configured".to_string())
+        })?;
+
+        backend.image_to_video(params).await.map_err(|e| {
+            Error::BackendError(format!("I2V failed: {}", e))
         })
     }
 

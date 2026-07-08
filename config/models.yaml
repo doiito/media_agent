@@ -1,0 +1,82 @@
+# 模型下载配置
+# 用于 comfyui-init 程序初始化系统环境和下载所需模型
+
+huggingface:
+  # HF Token（从环境变量读取，避免硬编码）
+  # 注册：https://huggingface.co/settings/tokens
+  token: "${HF_TOKEN:-}"
+  # HF 镜像（国内可设置 https://hf-mirror.com）
+  endpoint: "${HF_ENDPOINT:-https://huggingface.co}"
+
+# 需要下载的模型列表
+models:
+  # SD1.5 主模型（文生图/图生图基础模型）
+  - name: "v1-5-pruned-emaonly.safetensors"
+    repo: "runwayml/stable-diffusion-v1-5"
+    revision: "main"
+    filename: "v1-5-pruned-emaonly.safetensors"
+    target_dir: "models/checkpoints"
+    required: true
+    size_hint: "4.3GB"
+
+  # SVD 图生视频模型
+  - name: "svd_xt.safetensors"
+    repo: "stabilityai/stable-video-diffusion-img2vid-xt"
+    revision: "main"
+    filename: "svd_xt.safetensors"
+    target_dir: "models/svd"
+    required: false
+    size_hint: "5.7GB"
+
+  # CLIP 模型（文本编码）
+  - name: "clip-vit-large-patch14"
+    repo: "openai/clip-vit-large-patch14"
+    revision: "main"
+    filename: "pytorch_model.bin"
+    target_dir: "models/clip/clip-vit-large-patch14"
+    required: true
+    size_hint: "1.7GB"
+
+  # VAE 模型（图像解码）
+  - name: "vae-ft-mse-840000-ema-pruned.safetensors"
+    repo: "stabilityai/sd-vae-ft-mse"
+    revision: "main"
+    filename: "diffusion_pytorch_model.safetensors"
+    target_dir: "models/vae"
+    required: false
+    size_hint: "335MB"
+
+  # AnimateDiff 运动模块（文生视频）
+  - name: "mm_sd_v15_v2.ckpt"
+    repo: "guoyww/AnimateDiff"
+    revision: "main"
+    filename: "mm_sd_v15_v2.ckpt"
+    target_dir: "models/lora/animatediff"
+    required: false
+    size_hint: "1.5GB"
+
+# 系统目录配置
+directories:
+  - "models/checkpoints"
+  - "models/svd"
+  - "models/clip"
+  - "models/vae"
+  - "models/lora"
+  - "models/controlnet"
+  - "models/diffusion"
+  - "models/embeddings"
+  - "models/clip_vision"
+  - "input"
+  - "output"
+  - "logs"
+  - "data/agent_memory"
+  - "web"
+
+# sd-cli 验证配置
+sd_cli:
+  # sd-cli 可执行文件路径
+  expected_path: "/usr/local/bin/sd-cli"
+  # 版本检查参数
+  version_arg: "--version"
+  # 最小版本要求（语义化版本）
+  min_version: "0.0.1"

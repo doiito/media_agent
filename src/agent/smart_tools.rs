@@ -439,35 +439,51 @@ pub fn register_smart_workflow_tools(
                                 {"id": "1", "type": "CheckpointLoaderSimple"},
                                 {"id": "2", "type": "CLIPTextEncode", "description": "Positive prompt"},
                                 {"id": "3", "type": "CLIPTextEncode", "description": "Negative prompt"},
-                                {"id": "4", "type": "VAEEncode", "description": "Encode input image"},
-                                {"id": "5", "type": "KSampler", "description": "Sampling with denoise < 1.0"},
-                                {"id": "6", "type": "VAEDecode"},
-                                {"id": "7", "type": "SaveImage"}
+                                {"id": "4", "type": "LoadImage", "description": "Load input image (set image path in params)"},
+                                {"id": "5", "type": "VAEEncode", "description": "Encode input image to latent"},
+                                {"id": "6", "type": "KSampler", "description": "Sampling with denoise < 1.0"},
+                                {"id": "7", "type": "VAEDecode"},
+                                {"id": "8", "type": "SaveImage"}
                             ],
                             "connections": [
-                                {"from": ["1", "MODEL"], "to": ["5", "model"]},
+                                {"from": ["1", "MODEL"], "to": ["6", "model"]},
                                 {"from": ["1", "CLIP"], "to": ["2", "clip"]},
                                 {"from": ["1", "CLIP"], "to": ["3", "clip"]},
-                                {"from": ["1", "VAE"], "to": ["4", "vae"]},
-                                {"from": ["1", "VAE"], "to": ["6", "vae"]},
-                                {"from": ["2", "CONDITIONING"], "to": ["5", "positive"]},
-                                {"from": ["3", "CONDITIONING"], "to": ["5", "negative"]},
-                                {"from": ["4", "LATENT"], "to": ["5", "latent_image"]},
-                                {"from": ["5", "LATENT"], "to": ["6", "samples"]},
-                                {"from": ["6", "IMAGE"], "to": ["7", "images"]}
+                                {"from": ["1", "VAE"], "to": ["5", "vae"]},
+                                {"from": ["1", "VAE"], "to": ["7", "vae"]},
+                                {"from": ["4", "IMAGE"], "to": ["5", "pixels"]},
+                                {"from": ["2", "CONDITIONING"], "to": ["6", "positive"]},
+                                {"from": ["3", "CONDITIONING"], "to": ["6", "negative"]},
+                                {"from": ["5", "LATENT"], "to": ["6", "latent_image"]},
+                                {"from": ["6", "LATENT"], "to": ["7", "samples"]},
+                                {"from": ["7", "IMAGE"], "to": ["8", "images"]}
                             ],
-                            "note": "Set denoise to 0.5-0.8 for style transfer"
+                            "note": "Set denoise to 0.5-0.8 for style transfer. Set LoadImage image param to the uploaded image path."
+                        }),
+                        "image_to_video" => json!({
+                            "nodes": [
+                                {"id": "1", "type": "CheckpointLoaderSimple", "description": "Load SVD or SD checkpoint"},
+                                {"id": "2", "type": "LoadImage", "description": "Load input image (set image path in params, e.g. 'bk_0015.jpg')"},
+                                {"id": "3", "type": "SVDImageToVideo", "description": "Image to video using SVD"},
+                                {"id": "4", "type": "VideoCombine", "description": "Combine frames to MP4"}
+                            ],
+                            "connections": [
+                                {"from": ["1", "MODEL"], "to": ["3", "model"]},
+                                {"from": ["1", "VAE"], "to": ["3", "vae"]},
+                                {"from": ["2", "IMAGE"], "to": ["3", "image"]},
+                                {"from": ["3", "FRAMES"], "to": ["4", "frames"]}
+                            ],
+                            "note": "For image_to_video: 1) LoadImage must use the uploaded image path. 2) SVDImageToVideo needs svd_xt checkpoint. 3) Set motion_bucket_id=127, motion_scale=1024, frames=25 for 5s video at 5fps. 4) VideoCombine fps should match output fps."
                         }),
                         "video" => json!({
                             "nodes": [
-                                {"id": "1", "type": "CheckpointLoaderSimple"},
+                                {"id": "1", "type": "CheckpointLoaderSimple", "description": "Load SD checkpoint for AnimateDiff"},
                                 {"id": "2", "type": "CLIPTextEncode", "description": "Positive prompt"},
                                 {"id": "3", "type": "CLIPTextEncode", "description": "Negative prompt"},
-                                {"id": "4", "type": "EmptyLatentImage"},
-                                {"id": "5", "type": "KSampler"},
-                                {"id": "6", "type": "VAEDecode"},
-                                {"id": "7", "type": "SVDImageToVideo", "description": "Convert to video frames"},
-                                {"id": "8", "type": "VideoCombine", "description": "Combine frames to MP4"}
+                                {"id": "4", "type": "EmptyLatentImage", "description": "Create latent with batch_size=16 (16 frames)"},
+                                {"id": "5", "type": "AnimateDiffSampler", "description": "AnimateDiff sampling for animation"},
+                                {"id": "6", "type": "VAEDecode", "description": "Decode to frames"},
+                                {"id": "7", "type": "VideoCombine", "description": "Combine frames to MP4"}
                             ],
                             "connections": [
                                 {"from": ["1", "MODEL"], "to": ["5", "model"]},
@@ -478,9 +494,9 @@ pub fn register_smart_workflow_tools(
                                 {"from": ["3", "CONDITIONING"], "to": ["5", "negative"]},
                                 {"from": ["4", "LATENT"], "to": ["5", "latent_image"]},
                                 {"from": ["5", "LATENT"], "to": ["6", "samples"]},
-                                {"from": ["6", "IMAGE"], "to": ["7", "image"]},
-                                {"from": ["7", "FRAMES"], "to": ["8", "frames"]}
-                            ]
+                                {"from": ["6", "IMAGE"], "to": ["7", "frames"]}
+                            ],
+                            "note": "For text_to_video: 1) Set EmptyLatentImage batch_size=16 for 16 frames. 2) AnimateDiffSampler generates animation. 3) Use motion-friendly prompts like 'dancing, moving, walking'."
                         }),
                         "upscale" => json!({
                             "nodes": [
@@ -500,10 +516,37 @@ pub fn register_smart_workflow_tools(
                                 {"from": ["7", "IMAGE"], "to": ["8", "images"]}
                             ]
                         }),
+                        "inpaint" => json!({
+                            "nodes": [
+                                {"id": "1", "type": "CheckpointLoaderSimple"},
+                                {"id": "2", "type": "CLIPTextEncode", "description": "Positive prompt for inpaint area"},
+                                {"id": "3", "type": "CLIPTextEncode", "description": "Negative prompt"},
+                                {"id": "4", "type": "LoadImage", "description": "Load input image"},
+                                {"id": "5", "type": "VAEEncodeForInpaint", "description": "Encode image with mask"},
+                                {"id": "6", "type": "KSampler", "description": "Sampling with denoise=1.0"},
+                                {"id": "7", "type": "VAEDecode"},
+                                {"id": "8", "type": "SaveImage"}
+                            ],
+                            "connections": [
+                                {"from": ["1", "MODEL"], "to": ["6", "model"]},
+                                {"from": ["1", "CLIP"], "to": ["2", "clip"]},
+                                {"from": ["1", "CLIP"], "to": ["3", "clip"]},
+                                {"from": ["1", "VAE"], "to": ["5", "vae"]},
+                                {"from": ["1", "VAE"], "to": ["7", "vae"]},
+                                {"from": ["4", "IMAGE"], "to": ["5", "pixels"]},
+                                {"from": ["4", "MASK"], "to": ["5", "mask"]},
+                                {"from": ["2", "CONDITIONING"], "to": ["6", "positive"]},
+                                {"from": ["3", "CONDITIONING"], "to": ["6", "negative"]},
+                                {"from": ["5", "LATENT"], "to": ["6", "latent_image"]},
+                                {"from": ["6", "LATENT"], "to": ["7", "samples"]},
+                                {"from": ["7", "IMAGE"], "to": ["8", "images"]}
+                            ],
+                            "note": "LoadImage outputs both IMAGE and MASK. MASK is the alpha channel used for inpaint region."
+                        }),
                         _ => json!({
                             "nodes": [],
                             "connections": [],
-                            "message": "Unknown intent. Use text_to_image, image_to_image, video, or upscale."
+                            "message": "Unknown intent. Use text_to_image, image_to_image, image_to_video, video, inpaint, or upscale."
                         })
                     };
                     

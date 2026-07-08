@@ -343,6 +343,7 @@ impl NodeRegistry {
             ],
             outputs: vec![
                 NodePort { name: "filename".into(), data_kind: DataKind::STRING, required: true, default: None, description: "输出视频文件路径".into() },
+                NodePort { name: "video".into(), data_kind: DataKind::VIDEO, required: false, default: None, description: "输出视频数据".into() },
             ],
             description: "将帧序列或 output/ 目录中的 PNG 文件合成为视频文件".into(),
         });
@@ -384,7 +385,71 @@ impl NodeRegistry {
             outputs: vec![],
             description: "在界面上预览图片，不保存文件".into(),
         });
-        
+
+        specs.insert("LoadImage".to_string(), NodeSpec {
+            class_type: "LoadImage".to_string(),
+            display_name: "加载图片".to_string(),
+            category: "输入".to_string(),
+            inputs: vec![
+                NodePort { name: "image".into(), data_kind: DataKind::STRING, required: true, default: None, description: "图片文件名或路径（如 input/bk_0015.jpg）".into() },
+            ],
+            outputs: vec![
+                NodePort { name: "IMAGE".into(), data_kind: DataKind::IMAGE, required: true, default: None, description: "加载的图片".into() },
+                NodePort { name: "MASK".into(), data_kind: DataKind::IMAGE, required: false, default: None, description: "图片的 alpha 蒙版".into() },
+            ],
+            description: "从 input 目录加载图片文件，用于图生图/图生视频/局部重绘".into(),
+        });
+
+        specs.insert("SaveVideo".to_string(), NodeSpec {
+            class_type: "SaveVideo".to_string(),
+            display_name: "保存视频".to_string(),
+            category: "输出".to_string(),
+            inputs: vec![
+                NodePort { name: "frames".into(), data_kind: DataKind::FRAMES, required: true, default: None, description: "视频帧序列".into() },
+                NodePort { name: "filename_prefix".into(), data_kind: DataKind::STRING, required: false, default: Some(serde_json::json!("ComfyUI_video")), description: "文件名前缀".into() },
+                NodePort { name: "fps".into(), data_kind: DataKind::INT, required: false, default: Some(serde_json::json!(8)), description: "帧率".into() },
+            ],
+            outputs: vec![],
+            description: "将帧序列保存为视频文件（MP4/GIF）".into(),
+        });
+
+        specs.insert("VAEEncodeForInpaint".to_string(), NodeSpec {
+            class_type: "VAEEncodeForInpaint".to_string(),
+            display_name: "局部重绘编码".to_string(),
+            category: "latent".to_string(),
+            inputs: vec![
+                NodePort { name: "pixels".into(), data_kind: DataKind::IMAGE, required: true, default: None, description: "输入图片".into() },
+                NodePort { name: "vae".into(), data_kind: DataKind::VAE, required: true, default: None, description: "VAE 模型".into() },
+                NodePort { name: "mask".into(), data_kind: DataKind::IMAGE, required: true, default: None, description: "重绘蒙版（白色为重绘区域）".into() },
+                NodePort { name: "grow_mask_by".into(), data_kind: DataKind::INT, required: false, default: Some(serde_json::json!(6)), description: "蒙版扩展像素".into() },
+            ],
+            outputs: vec![
+                NodePort { name: "LATENT".into(), data_kind: DataKind::LATENT, required: true, default: None, description: "编码后的 Latent（含蒙版信息）".into() },
+            ],
+            description: "将图片编码为 Latent，同时叠加蒙版信息，用于 inpaint 局部重绘".into(),
+        });
+
+        specs.insert("AnimateDiffSampler".to_string(), NodeSpec {
+            class_type: "AnimateDiffSampler".to_string(),
+            display_name: "AnimateDiff 动画采样".to_string(),
+            category: "视频".to_string(),
+            inputs: vec![
+                NodePort { name: "model".into(), data_kind: DataKind::MODEL, required: true, default: None, description: "UNET 模型".into() },
+                NodePort { name: "positive".into(), data_kind: DataKind::CONDITIONING, required: true, default: None, description: "正向条件".into() },
+                NodePort { name: "negative".into(), data_kind: DataKind::CONDITIONING, required: true, default: None, description: "负向条件".into() },
+                NodePort { name: "latent_image".into(), data_kind: DataKind::LATENT, required: true, default: None, description: "输入 Latent（batch_size=帧数）".into() },
+                NodePort { name: "seed".into(), data_kind: DataKind::INT, required: false, default: Some(serde_json::json!(0)), description: "随机种子".into() },
+                NodePort { name: "steps".into(), data_kind: DataKind::INT, required: false, default: Some(serde_json::json!(25)), description: "采样步数".into() },
+                NodePort { name: "cfg".into(), data_kind: DataKind::FLOAT, required: false, default: Some(serde_json::json!(8.0)), description: "CFG Scale".into() },
+                NodePort { name: "sampler_name".into(), data_kind: DataKind::STRING, required: false, default: Some(serde_json::json!("euler")), description: "采样器".into() },
+                NodePort { name: "scheduler".into(), data_kind: DataKind::STRING, required: false, default: Some(serde_json::json!("normal")), description: "调度器".into() },
+            ],
+            outputs: vec![
+                NodePort { name: "LATENT".into(), data_kind: DataKind::LATENT, required: true, default: None, description: "采样后的 Latent（含多帧）".into() },
+            ],
+            description: "AnimateDiff 动画采样器，基于 SD 模型生成动画帧序列".into(),
+        });
+
         Self { specs }
     }
     

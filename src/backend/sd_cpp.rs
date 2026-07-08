@@ -2,7 +2,7 @@
 // 包含进程管理、错误处理、重试机制、并发控制
 
 use crate::types::*;
-use crate::backend::{T2IParams, I2IParams, T2VParams};
+use crate::backend::{T2IParams, I2IParams, T2VParams, I2VParams};
 use serde::{Deserialize, Serialize};
 use std::io::{BufRead, BufReader, Write};
 use std::process::{Child, Command, Stdio};
@@ -1001,6 +1001,50 @@ impl StableDiffusionCppBackend {
 
         let mut pm = self.process_manager.lock().await;
         let response = pm.execute_request(&request)?;
+
+        if !response.is_success() {
+            return Err(SdError::ExecutionFailed(
+                response.error.unwrap_or_else(|| "Unknown error".to_string())
+            ));
+        }
+
+        let video_data = std::fs::read(&response.output_path)?;
+        Ok(video_data)
+    }
+
+    /// 图生视频（SVD）
+    pub async fn image_to_video(&self, params: I2VParams) -> Result<Vec<u8>, SdError> {
+        let _permit = self.semaphore.acquire().await.map_err(|e| {
+            SdError::ResourceLimitExceeded(format!("Failed to acquire semaphore: {}", e))
+        })?;
+
+        // 将输入图像写入临时文件
+        let input_path = std::env::temp_dir().join(format!("svd_input_{}.png", uuid::Uuid::new_v4()));
+        std::fs::write(&input_path, &params.input_image).map_err(SdError::from)?;
+
+        // SVD 模式：通过进程协议发送 image_to_video 请求
+        let request = SdRequest {
+            mode: "image_to_video".to_string(),
+            prompt: params.prompt,
+            negative_prompt: params.negative_prompt,
+            width: params.width,
+            height: params.height,
+            steps: params.steps,
+            cfg: params.cfg,
+            sampler: "euler".to_string(),
+            seed: params.seed,
+            model_path: params.model_path,
+            input_image: Some(input_path.to_string_lossy().into_owned()),
+            controlnet: None,
+            denoise: None,
+            request_id: Some(uuid::Uuid::new_v4().to_string()),
+        };
+
+        let mut pm = self.process_manager.lock().await;
+        let response = pm.execute_request(&request)?;
+
+        // 清理临时文件
+        let _ = std::fs::remove_file(&input_path);
 
         if !response.is_success() {
             return Err(SdError::ExecutionFailed(

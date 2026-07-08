@@ -118,6 +118,7 @@ mod scene_frame_generation {
 
     /// 场景1: 动物行走动画序列（基础运动）
     #[test]
+    #[ignore = "requires GPU for real SD generation; run with --ignored"]
     fn test_animal_walk_sequence() {
         if !model_exists() || !sd_cli_exists() {
             println!("SKIP: Model or sd-cli not available");
@@ -147,6 +148,7 @@ mod scene_frame_generation {
 
     /// 场景2: 自然风光渐变序列（日落过程）
     #[test]
+    #[ignore = "requires GPU for real SD generation; run with --ignored"]
     fn test_sunset_progression_sequence() {
         if !model_exists() || !sd_cli_exists() {
             println!("SKIP: Model or sd-cli not available");
@@ -174,6 +176,7 @@ mod scene_frame_generation {
 
     /// 场景3: 物体旋转/变化序列
     #[test]
+    #[ignore = "requires GPU for real SD generation; run with --ignored"]
     fn test_object_transition_sequence() {
         if !model_exists() || !sd_cli_exists() {
             println!("SKIP: Model or sd-cli not available");
@@ -201,6 +204,7 @@ mod scene_frame_generation {
 
     /// 场景4: 人物动作序列
     #[test]
+    #[ignore = "requires GPU for real SD generation; run with --ignored"]
     fn test_human_action_sequence() {
         if !model_exists() || !sd_cli_exists() {
             println!("SKIP: Model or sd-cli not available");
@@ -228,6 +232,7 @@ mod scene_frame_generation {
 
     /// 场景5: 城市街景变化序列
     #[test]
+    #[ignore = "requires GPU for real SD generation; run with --ignored"]
     fn test_cityscape_progression() {
         if !model_exists() || !sd_cli_exists() {
             println!("SKIP: Model or sd-cli not available");
@@ -262,6 +267,7 @@ mod multi_prompt_morph {
 
     /// 模拟 morph: 从猫 → 老虎 → 豹子 的渐变序列
     #[test]
+    #[ignore = "requires GPU for real SD generation; run with --ignored"]
     fn test_animal_morph_sequence() {
         if !model_exists() || !sd_cli_exists() {
             println!("SKIP: Model or sd-cli not available");
@@ -291,6 +297,7 @@ mod multi_prompt_morph {
 
     /// 模拟多风格 morph: 写实 → 油画 → 动漫
     #[test]
+    #[ignore = "requires GPU for real SD generation; run with --ignored"]
     fn test_style_morph_sequence() {
         if !model_exists() || !sd_cli_exists() {
             println!("SKIP: Model or sd-cli not available");
@@ -348,6 +355,7 @@ mod frame_interpolation {
 
     /// 对真实生成帧执行帧插值文件计算
     #[test]
+    #[ignore = "requires GPU for real SD generation; run with --ignored"]
     fn test_frame_interpolation_on_generated_frames() {
         if !model_exists() || !sd_cli_exists() {
             println!("SKIP: Model or sd-cli not available");
@@ -403,6 +411,7 @@ mod video_assembly {
 
     /// 将生成帧通过 ffmpeg 组装为短视频 (mp4)
     #[test]
+    #[ignore = "requires GPU for real SD generation; run with --ignored"]
     fn test_assemble_frames_to_video() {
         if !model_exists() || !sd_cli_exists() {
             println!("SKIP: Model or sd-cli not available");
@@ -489,6 +498,7 @@ mod video_assembly {
 
     /// GIF 格式输出模拟（ffmpeg 转 GIF）
     #[test]
+    #[ignore = "requires GPU for real SD generation; run with --ignored"]
     fn test_assemble_frames_to_gif() {
         if !model_exists() || !sd_cli_exists() {
             println!("SKIP: Model or sd-cli not available");
@@ -552,6 +562,7 @@ mod parameter_variations {
 
     /// 不同 steps 对帧质量的影响（仅验证生成，不评判质量）
     #[test]
+    #[ignore = "requires GPU for real SD generation; run with --ignored"]
     fn test_frame_at_different_steps() {
         if !model_exists() || !sd_cli_exists() {
             println!("SKIP: Model or sd-cli not available");
@@ -577,6 +588,7 @@ mod parameter_variations {
 
     /// 不同 cfg 对帧的影响
     #[test]
+    #[ignore = "requires GPU for real SD generation; run with --ignored"]
     fn test_frame_at_different_cfg() {
         if !model_exists() || !sd_cli_exists() {
             println!("SKIP: Model or sd-cli not available");
@@ -601,6 +613,7 @@ mod parameter_variations {
 
     /// 不同尺寸的帧
     #[test]
+    #[ignore = "requires GPU for real SD generation; run with --ignored"]
     fn test_frame_at_different_resolutions() {
         if !model_exists() || !sd_cli_exists() {
             println!("SKIP: Model or sd-cli not available");
@@ -773,6 +786,7 @@ mod cross_scene_workflow {
 
     /// 生成不同场景的帧并验证文件结构完整
     #[test]
+    #[ignore = "requires GPU for real SD generation; run with --ignored"]
     fn test_multi_scene_frame_collection() {
         if !model_exists() || !sd_cli_exists() {
             println!("SKIP: Model or sd-cli not available");
@@ -813,6 +827,7 @@ mod cross_scene_workflow {
 
     /// 跨工作流组合测试：每帧使用不同参数生成，模拟 workflow 组合
     #[test]
+    #[ignore = "requires GPU for real SD generation; run with --ignored"]
     fn test_composite_workflow_simulation() {
         if !model_exists() || !sd_cli_exists() {
             println!("SKIP: Model or sd-cli not available");
@@ -850,6 +865,7 @@ mod edge_cases {
 
     /// 极端小尺寸帧
     #[test]
+    #[ignore = "requires GPU for real SD generation; run with --ignored"]
     fn test_minimal_resolution_frame() {
         if !model_exists() || !sd_cli_exists() {
             println!("SKIP: Model or sd-cli not available");
@@ -867,6 +883,7 @@ mod edge_cases {
 
     /// 单帧生成（极端情况）
     #[test]
+    #[ignore = "requires GPU for real SD generation; run with --ignored"]
     fn test_single_frame_generation() {
         if !model_exists() || !sd_cli_exists() {
             println!("SKIP: Model or sd-cli not available");
@@ -883,6 +900,7 @@ mod edge_cases {
 
     /// 极简提示词
     #[test]
+    #[ignore = "requires GPU for real SD generation; run with --ignored"]
     fn test_minimal_prompt_frame() {
         if !model_exists() || !sd_cli_exists() {
             println!("SKIP: Model or sd-cli not available");

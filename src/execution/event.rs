@@ -53,6 +53,31 @@ pub enum Event {
     Status {
         status: SystemStatus,
     },
+    /// Agent PDCA 阶段开始
+    AgentPhaseStart {
+        prompt_id: String,
+        phase: String,       // planning / doing / checking / acting
+        description: String,
+    },
+    /// Agent PDCA 阶段完成
+    AgentPhaseComplete {
+        prompt_id: String,
+        phase: String,
+        success: bool,
+    },
+    /// Agent 思考过程（桥接 gliding_horse THOUGHT 事件）
+    AgentThought {
+        prompt_id: String,
+        thought: String,
+        action: String,
+    },
+    /// Agent 工具调用
+    AgentToolCall {
+        prompt_id: String,
+        tool_name: String,
+        status: String,           // started / completed / failed
+        result_summary: String,
+    },
 }
 
 /// 系统状态
@@ -229,7 +254,92 @@ mod tests {
         let _rx = bus1.subscribe("c1".to_string()).await;
 
         let bus2 = bus1.clone();
-        // 克隆后共享同一份数据
         assert_eq!(bus2.subscriber_count().await, 1);
+    }
+
+    #[tokio::test]
+    async fn test_agent_phase_start_event() {
+        let bus = EventBus::new();
+        let mut rx = bus.subscribe("c1".to_string()).await;
+
+        bus.publish(Event::AgentPhaseStart {
+            prompt_id: "task-1".to_string(),
+            phase: "planning".to_string(),
+            description: "Analyzing user request".to_string(),
+        }).await;
+
+        let event = rx.recv().await.unwrap();
+        match event {
+            Event::AgentPhaseStart { prompt_id, phase, description } => {
+                assert_eq!(prompt_id, "task-1");
+                assert_eq!(phase, "planning");
+                assert_eq!(description, "Analyzing user request");
+            }
+            _ => panic!("Expected AgentPhaseStart"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_agent_thought_event() {
+        let bus = EventBus::new();
+        let mut rx = bus.subscribe("c1".to_string()).await;
+
+        bus.publish(Event::AgentThought {
+            prompt_id: "task-2".to_string(),
+            thought: "Selecting text_to_image workflow".to_string(),
+            action: "dispatch_plan".to_string(),
+        }).await;
+
+        let event = rx.recv().await.unwrap();
+        match event {
+            Event::AgentThought { thought, action, .. } => {
+                assert_eq!(thought, "Selecting text_to_image workflow");
+                assert_eq!(action, "dispatch_plan");
+            }
+            _ => panic!("Expected AgentThought"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_agent_tool_call_event() {
+        let bus = EventBus::new();
+        let mut rx = bus.subscribe("c1".to_string()).await;
+
+        bus.publish(Event::AgentToolCall {
+            prompt_id: "task-3".to_string(),
+            tool_name: "build_t2i_workflow".to_string(),
+            status: "completed".to_string(),
+            result_summary: "Workflow with 7 nodes".to_string(),
+        }).await;
+
+        let event = rx.recv().await.unwrap();
+        match event {
+            Event::AgentToolCall { tool_name, status, .. } => {
+                assert_eq!(tool_name, "build_t2i_workflow");
+                assert_eq!(status, "completed");
+            }
+            _ => panic!("Expected AgentToolCall"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_agent_phase_complete_event() {
+        let bus = EventBus::new();
+        let mut rx = bus.subscribe("c1".to_string()).await;
+
+        bus.publish(Event::AgentPhaseComplete {
+            prompt_id: "task-4".to_string(),
+            phase: "doing".to_string(),
+            success: true,
+        }).await;
+
+        let event = rx.recv().await.unwrap();
+        match event {
+            Event::AgentPhaseComplete { phase, success, .. } => {
+                assert_eq!(phase, "doing");
+                assert!(success);
+            }
+            _ => panic!("Expected AgentPhaseComplete"),
+        }
     }
 }

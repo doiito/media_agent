@@ -24,6 +24,13 @@ impl NodeRegistry {
         }
     }
 
+    /// 使用指定的 BackendRouter 创建注册表（让视频节点能调用实际后端）
+    pub fn with_backend(router: Arc<crate::backend::BackendRouter>) -> Self {
+        Self {
+            registered_nodes: Self::register_default_nodes_with_backend(router),
+        }
+    }
+
     /// 创建节点实例
     pub fn create_node(&self, class_type: &str) -> Result<Arc<Mutex<dyn Node>>, Error> {
         if let Some(node) = self.registered_nodes.get(class_type) {
@@ -49,6 +56,15 @@ impl NodeRegistry {
 
     /// 注册默认节点
     fn register_default_nodes() -> HashMap<String, Arc<Mutex<dyn Node>>> {
+        Self::register_default_nodes_internal(None)
+    }
+
+    /// 使用指定 BackendRouter 注册默认节点
+    fn register_default_nodes_with_backend(router: Arc<crate::backend::BackendRouter>) -> HashMap<String, Arc<Mutex<dyn Node>>> {
+        Self::register_default_nodes_internal(Some(router))
+    }
+
+    fn register_default_nodes_internal(router: Option<Arc<crate::backend::BackendRouter>>) -> HashMap<String, Arc<Mutex<dyn Node>>> {
         let mut nodes: HashMap<String, Arc<Mutex<dyn Node>>>= HashMap::new();
 
         // 注册核心节点
@@ -200,7 +216,12 @@ impl NodeRegistry {
         // 视频节点
         nodes.insert(
             "SVDImageToVideo".to_string(),
-            Arc::new(Mutex::new(SVDImageToVideoNode::new())),
+            Arc::new(Mutex::new(
+                match &router {
+                    Some(r) => SVDImageToVideoNode::with_backend(r.clone()),
+                    None => SVDImageToVideoNode::new(),
+                }
+            )),
         );
         nodes.insert(
             "VideoFrameInterpolation".to_string(),
@@ -224,7 +245,12 @@ impl NodeRegistry {
         );
         nodes.insert(
             "AnimateDiffSampler".to_string(),
-            Arc::new(Mutex::new(AnimateDiffSamplerNode::new())),
+            Arc::new(Mutex::new(
+                match &router {
+                    Some(r) => AnimateDiffSamplerNode::with_backend(r.clone()),
+                    None => AnimateDiffSamplerNode::new(),
+                }
+            )),
         );
 
         nodes

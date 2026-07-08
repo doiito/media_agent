@@ -118,3 +118,41 @@ impl Default for T2VParams {
         }
     }
 }
+
+/// 图生视频参数（SVD）
+#[derive(Debug, Clone)]
+pub struct I2VParams {
+    pub prompt: String,
+    pub negative_prompt: String,
+    pub input_image: Vec<u8>,
+    pub width: usize,
+    pub height: usize,
+    pub frames: usize,
+    pub fps: usize,
+    pub motion_bucket_id: i32,
+    pub motion_scale: f32,
+    pub steps: usize,
+    pub cfg: f32,
+    pub seed: usize,
+    pub model_path: String,
+}
+
+impl Default for I2VParams {
+    fn default() -> Self {
+        Self {
+            prompt: String::new(),
+            negative_prompt: String::new(),
+            input_image: Vec::new(),
+            width: 1024,
+            height: 576,
+            frames: 25,
+            fps: 8,
+            motion_bucket_id: 127,
+            motion_scale: 1024.0,
+            steps: 25,
+            cfg: 2.5,
+            seed: 0,
+            model_path: String::new(),
+        }
+    }
+}

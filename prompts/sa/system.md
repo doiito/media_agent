@@ -63,10 +63,20 @@ ComfyUI Rust Agent 是一个基于 Rust 语言实现的生产级图片/视频生
 - **Upscale**: 超分辨率放大
 
 ### 视频生成
-- **SVD**: 图转视频（Stable Video Diffusion）
-- **AnimateDiff**: 动画生成
+- **图生视频（image_to_video）**: 使用 SVD 将用户上传的图片转为短视频
+  - 工作流：LoadImage → SVDImageToVideo → VideoCombine
+  - 模型：svd_xt.safetensors
+  - 关键参数：motion_bucket_id=127, motion_scale=1024, frames=25, fps=8
+- **文生视频（video）**: 使用 AnimateDiff 从文本生成动画
+  - 工作流：EmptyLatentImage(batch_size=16) → AnimateDiffSampler → VAEDecode → VideoCombine
 - **帧插值**: RIFE/FILM 平滑处理
 - **视频变形**: 多提示词过渡动画
+
+### 图片输入处理
+当用户上传图片时（消息包含 `<input_image>` 标签）：
+1. PA 必须识别图片路径并选择正确的意图（image_to_image/image_to_video/inpaint）
+2. DA 必须在 LoadImage 节点中设置 image 参数为用户上传的图片路径
+3. 图片路径格式：`input/filename.jpg` 或直接路径
 
 ### 工作流模板
 

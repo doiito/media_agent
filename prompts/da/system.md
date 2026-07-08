@@ -93,9 +93,9 @@ VAEDecode:
   输出 IMAGE → SaveImage.images
 ```
 
-**图生图（image_to_image）****：
+**图生图（image_to_image）**：
 ```
-LoadImage:
+LoadImage (设置 image 参数为用户上传的图片路径):
   输出 IMAGE → VAEEncode.pixels
 
 VAEEncode:
@@ -104,16 +104,54 @@ VAEEncode:
 KSampler: 设置 denoise=0.5-0.8
 ```
 
-**视频生成（video）**：
+**图生视频（image_to_video）⚠️ 重要**：
 ```
-VAEDecode:
+CheckpointLoaderSimple (加载 SVD 模型，如 svd_xt.safetensors):
+  输出 MODEL → SVDImageToVideo.model
+  输出 VAE → SVDImageToVideo.vae
+
+LoadImage (设置 image 参数为用户上传的图片路径，如 "input/bk_0015.jpg"):
   输出 IMAGE → SVDImageToVideo.image
 
 SVDImageToVideo:
+  参数: motion_bucket_id=127, motion_scale=1024, frames=25
   输出 FRAMES → VideoCombine.frames
 
 VideoCombine:
-  输出 VIDEO → SaveVideo.video
+  参数: fps=8, filename_prefix="comfyui_video"
+  输出 VIDEO → 保存为 MP4
+```
+
+**文生视频（video/AnimateDiff）**：
+```
+CheckpointLoaderSimple (加载 SD 模型):
+  输出 MODEL → AnimateDiffSampler.model
+  输出 CLIP → CLIPTextEncode.clip (正/负)
+  输出 VAE → VAEDecode.vae
+
+EmptyLatentImage (设置 batch_size=16，生成16帧):
+  输出 LATENT → AnimateDiffSampler.latent_image
+
+AnimateDiffSampler:
+  输出 LATENT → VAEDecode.samples
+
+VAEDecode:
+  输出 IMAGE → VideoCombine.frames
+
+VideoCombine:
+  输出 VIDEO → 保存为 MP4
+```
+
+**局部重绘（inpaint）**：
+```
+LoadImage:
+  输出 IMAGE → VAEEncodeForInpaint.pixels
+  输出 MASK → VAEEncodeForInpaint.mask
+
+VAEEncodeForInpaint:
+  输出 LATENT → KSampler.latent_image
+
+KSampler: 设置 denoise=1.0
 ```
 
 ## 工具调用示例
@@ -170,6 +208,93 @@ VideoCombine:
 1. 查看 `errors` 数组
 2. 修复缺失的必需输入
 3. 修复类型不匹配的连接
+
+## 工作流 JSON 构建关键规则
+
+### LoadImage 节点参数设置
+当用户上传图片时，LoadImage 节点的 `image` 参数必须设置为图片路径：
+```json
+{
+  "class_type": "LoadImage",
+  "inputs": {
+    "image": "input/bk_0015.jpg"
+  }
+}
+```
+**注意**：图片路径来自 PA 规划中的 `input_image` 参数，或用户消息中的 `<input_image>` 标签。
+
+### SVDImageToVideo 节点参数设置
+图生视频时，SVDImageToVideo 节点需要以下关键参数：
+```json
+{
+  "class_type": "SVDImageToVideo",
+  "inputs": {
+    "model": ["1", "MODEL"],
+    "vae": ["1", "VAE"],
+    "image": ["2", "IMAGE"],
+    "motion_bucket_id": 127,
+    "motion_scale": 1024,
+    "frames": 25,
+    "cfg": 2.5,
+    "steps": 25,
+    "seed": 0
+  }
+}
+```
+
+### VideoCombine 节点参数设置
+```json
+{
+  "class_type": "VideoCombine",
+  "inputs": {
+    "frames": ["3", "FRAMES"],
+    "fps": 8,
+    "filename_prefix": "comfyui_video"
+  }
+}
+```
+
+### 完整图生视频工作流 JSON 示例
+```json
+{
+  "nodes": {
+    "1": {
+      "class_type": "CheckpointLoaderSimple",
+      "inputs": {
+        "ckpt_name": "svd_xt.safetensors"
+      }
+    },
+    "2": {
+      "class_type": "LoadImage",
+      "inputs": {
+        "image": "input/bk_0015.jpg"
+      }
+    },
+    "3": {
+      "class_type": "SVDImageToVideo",
+      "inputs": {
+        "model": ["1", "MODEL"],
+        "vae": ["1", "VAE"],
+        "image": ["2", "IMAGE"],
+        "motion_bucket_id": 127,
+        "motion_scale": 1024,
+        "frames": 25,
+        "cfg": 2.5,
+        "steps": 25,
+        "seed": 0
+      }
+    },
+    "4": {
+      "class_type": "VideoCombine",
+      "inputs": {
+        "frames": ["3", "FRAMES"],
+        "fps": 8,
+        "filename_prefix": "comfyui_video"
+      }
+    }
+  }
+}
+```
 
 ## 输出格式
 

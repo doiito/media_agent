@@ -183,6 +183,81 @@ header h1 { font-size: 14px; font-weight: 600; line-height: 1.3; }
 .progress-label { font-size: 11px; color: var(--text-dim); margin-top: 4px; }
 .error-text { color: var(--error); font-size: 13px; margin-top: 4px; }
 
+/* PDCA Stages */
+.pdca-stages {
+  display: flex; align-items: center; gap: 2px; margin-bottom: 8px;
+}
+.stage {
+  display: flex; align-items: center; gap: 4px;
+  padding: 3px 8px; border-radius: 4px;
+  font-size: 10px; color: var(--text-dim);
+  background: var(--bg-secondary, rgba(255,255,255,0.05));
+  transition: all .3s ease;
+}
+.stage-icon {
+  width: 16px; height: 16px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 9px; font-weight: 600;
+  background: var(--border); color: var(--text-dim);
+}
+.stage.active {
+  color: var(--accent-1, #6c8eff);
+  background: rgba(108, 142, 255, 0.12);
+}
+.stage.active .stage-icon {
+  background: var(--accent-1, #6c8eff); color: #fff;
+  animation: pulse 1.5s ease-in-out infinite;
+}
+.stage.completed {
+  color: #4ade80;
+}
+.stage.completed .stage-icon {
+  background: #4ade80; color: #fff;
+}
+.stage.failed {
+  color: var(--error, #ef4444);
+}
+.stage.failed .stage-icon {
+  background: var(--error, #ef4444); color: #fff;
+}
+.stage-connector {
+  flex: 1; height: 1px; background: var(--border);
+  min-width: 8px;
+}
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+/* Agent Thoughts */
+.agent-thoughts {
+  margin-top: 6px; max-height: 120px; overflow-y: auto;
+}
+.agent-thought {
+  font-size: 11px; color: var(--text-dim);
+  padding: 2px 0; line-height: 1.4;
+  border-left: 2px solid var(--border); padding-left: 6px;
+  margin-bottom: 2px;
+}
+.thought-action {
+  display: inline-block; padding: 0 4px; border-radius: 2px;
+  background: rgba(108, 142, 255, 0.15); color: var(--accent-1, #6c8eff);
+  font-size: 9px; font-weight: 600; margin-right: 4px;
+}
+
+/* Tool Calls */
+.tool-calls { margin-top: 4px; }
+.tool-call {
+  display: flex; align-items: center; gap: 4px;
+  font-size: 11px; color: var(--text-dim);
+  padding: 2px 0;
+}
+.tool-call.completed .tool-name { color: #4ade80; }
+.tool-call.failed .tool-name { color: var(--error, #ef4444); }
+.tool-status { font-size: 12px; }
+.tool-name { font-weight: 500; }
+.tool-summary { color: var(--text-dim); font-size: 10px; }
+
 /* Media grid in chat (multiple images) */
 .media-grid {
   display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));

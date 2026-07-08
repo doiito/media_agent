@@ -168,6 +168,28 @@ impl AgentEngine {
         // 构建 EventBus
         let event_bus = Arc::new(glidinghorse::core::event_bus::EventBus::new(100));
 
+        // 桥接 gliding_horse EventBus → media_agent EventBus
+        // 将 PDCA 阶段事件转发到 WebSocket，让前端能展示中间过程
+        let mut gh_rx = event_bus.subscribe();
+        let media_event_bus = self.context.event_bus.clone();
+        tokio::spawn(async move {
+            loop {
+                match gh_rx.recv().await {
+                    Ok(gh_event) => {
+                        bridge_gh_event(&media_event_bus, &gh_event).await;
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                        log::warn!("Agent event bridge lagged by {} events", n);
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                        log::info!("Agent event bridge closed");
+                        break;
+                    }
+                }
+            }
+        });
+        log::info!("Agent event bridge started (gliding_horse → media_agent EventBus)");
+
         // 构建 SupervisorAgent
         let max_iterations = 15;
         let supervisor = glidinghorse::core::SupervisorAgent::new(
@@ -328,8 +350,15 @@ impl AgentEngine {
         let task_id = uuid::Uuid::new_v4().to_string();
         let task_iri = format!("iri://task/{}", task_id);
 
+        // 发布执行开始事件到 media_agent EventBus（前端可收到）
+        self.context.event_bus.publish(
+            crate::execution::Event::ExecutionStart {
+                prompt_id: task_id.clone(),
+            }
+        ).await;
+
         // 如果指定工作流，注入到 TaskContext
-        if let Some(path) = workflow_path {
+        let result = if let Some(path) = workflow_path {
             let jsonld = std::fs::read_to_string(path)
                 .map_err(|e| format!("Failed to read workflow: {}", e))?;
 
@@ -337,14 +366,36 @@ impl AgentEngine {
                 .with_workflow(&jsonld);
 
             supervisor.process_task_with_context(message, &task_iri, ctx).await
-                .map(|result| (task_id, result))
+                .map(|result| (task_id.clone(), result))
                 .map_err(|e| e.to_string())
         } else {
             // 直接处理
             supervisor.process_task(message, &task_iri).await
-                .map(|result| (task_id, result))
+                .map(|result| (task_id.clone(), result))
                 .map_err(|e| e.to_string())
+        };
+
+        // 根据结果发布完成事件
+        match &result {
+            Ok(_) => {
+                self.context.event_bus.publish(
+                    crate::execution::Event::ExecutionSuccess {
+                        prompt_id: task_id.clone(),
+                        outputs: std::collections::HashMap::new(),
+                    }
+                ).await;
+            }
+            Err(e) => {
+                self.context.event_bus.publish(
+                    crate::execution::Event::ExecutionError {
+                        prompt_id: task_id.clone(),
+                        error: e.clone(),
+                    }
+                ).await;
+            }
         }
+
+        result
     }
 
     /// 查询 Agent 状态
@@ -379,4 +430,67 @@ pub struct AgentStatus {
     pub context_ready: bool,
     /// SupervisorAgent 是否已初始化
     pub supervisor_ready: bool,
+}
+
+/// 桥接 gliding_horse 事件到 media_agent EventBus
+///
+/// 将 PDCA 循环的 THOUGHT 事件映射为前端可展示的 AgentPhaseStart/AgentThought 事件
+async fn bridge_gh_event(
+    media_bus: &crate::execution::EventBus,
+    gh_event: &glidinghorse::core::event_bus::Event,
+) {
+    // 只处理 THOUGHT 类型事件
+    if gh_event.event_type != "THOUGHT" {
+        return;
+    }
+
+    // 动态解析 payload JSON，避免依赖 gliding_horse 内部类型
+    let payload: serde_json::Value = match serde_json::from_str(&gh_event.payload) {
+        Ok(v) => v,
+        Err(_) => return,
+    };
+
+    // 提取 action 和 thought 字段
+    let action = payload["event"]["Thought"]["action"]
+        .as_str()
+        .or_else(|| payload["action"].as_str())
+        .unwrap_or("");
+    let thought = payload["event"]["Thought"]["thought"]
+        .as_str()
+        .or_else(|| payload["thought"].as_str())
+        .unwrap_or("");
+
+    let prompt_id = gh_event.task_iri.replace("iri://task/", "");
+
+    // 根据 action 映射到 PDCA 阶段
+    let (phase, description) = match action {
+        "dispatch_plan" | "plan_created" => ("planning", "Planning Agent 正在分析需求并制定生成方案"),
+        "dispatch_do" => ("doing", "Doing Agent 正在构建工作流并执行生成"),
+        "dispatch_check" => ("checking", "Checking Agent 正在验证生成结果"),
+        "dispatch_act" => ("acting", "Acting Agent 正在做最终决策"),
+        _ => {
+            // 未识别的 action，发布为 AgentThought
+            media_bus.publish(crate::execution::Event::AgentThought {
+                prompt_id,
+                thought: thought.to_string(),
+                action: action.to_string(),
+            }).await;
+            return;
+        }
+    };
+
+    media_bus.publish(crate::execution::Event::AgentPhaseStart {
+        prompt_id,
+        phase: phase.to_string(),
+        description: description.to_string(),
+    }).await;
+
+    // 如果有 thought 内容，同时发布
+    if !thought.is_empty() {
+        media_bus.publish(crate::execution::Event::AgentThought {
+            prompt_id: gh_event.task_iri.replace("iri://task/", ""),
+            thought: thought.to_string(),
+            action: action.to_string(),
+        }).await;
+    }
 }

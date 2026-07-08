@@ -477,6 +477,144 @@ fn register_basic_tools(
         &["DA"],
     );
 
+    // === 3.5. build_i2v_workflow ===
+    // 构建图生视频工作流（LoadImage → SVDImageToVideo → VideoCombine）
+    executor.register(
+        "build_i2v_workflow",
+        "Build an image-to-video workflow using SVD. Requires input image path. Returns workflow JSON ready for submission.",
+        json!({
+            "type": "object",
+            "properties": {
+                "image_path": {"type": "string", "description": "Input image path (e.g., 'input/bk_0015.jpg')"},
+                "model": {"type": "string", "default": "svd_xt.safetensors", "description": "SVD checkpoint name"},
+                "frames": {"type": "integer", "default": 25, "description": "Number of video frames (25 = ~5s at 5fps)"},
+                "fps": {"type": "integer", "default": 8, "description": "Output video FPS"},
+                "motion_bucket_id": {"type": "integer", "default": 127, "description": "Motion intensity (127 = standard)"},
+                "motion_scale": {"type": "integer", "default": 1024, "description": "Motion amplitude"},
+                "cfg": {"type": "number", "default": 2.5, "description": "CFG scale for SVD"},
+                "steps": {"type": "integer", "default": 25, "description": "Sampling steps"},
+                "seed": {"type": "integer", "default": -1}
+            },
+            "required": ["image_path"]
+        }),
+        Arc::new({
+            let ctx = ctx.clone();
+            move |input: Value| {
+                let _ctx = ctx.clone();
+                Box::pin(async move {
+                    let image_path = input.get("image_path")
+                        .and_then(|v| v.as_str())
+                        .ok_or_else(|| "Missing image_path parameter".to_string())?;
+
+                    // 验证图片文件存在
+                    let check_path = if std::path::Path::new(image_path).exists() {
+                        image_path.to_string()
+                    } else {
+                        let alt = format!("input/{}", image_path);
+                        if std::path::Path::new(&alt).exists() {
+                            alt
+                        } else {
+                            return Err(format!(
+                                "Image file not found: {} (also tried input/{})",
+                                image_path, image_path
+                            ));
+                        }
+                    };
+
+                    let model = input.get("model")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("svd_xt.safetensors");
+
+                    let frames = input.get("frames")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(25) as usize;
+
+                    let fps = input.get("fps")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(8) as usize;
+
+                    let motion_bucket_id = input.get("motion_bucket_id")
+                        .and_then(|v| v.as_i64())
+                        .unwrap_or(127) as i32;
+
+                    let motion_scale = input.get("motion_scale")
+                        .and_then(|v| v.as_i64())
+                        .unwrap_or(1024) as f32;
+
+                    let cfg = input.get("cfg")
+                        .and_then(|v| v.as_f64())
+                        .unwrap_or(2.5) as f32;
+
+                    let steps = input.get("steps")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(25) as usize;
+
+                    let seed = input.get("seed")
+                        .and_then(|v| v.as_i64())
+                        .unwrap_or(-1);
+                    let seed = if seed < 0 { rand::random::<i64>() } else { seed };
+
+                    // 构建 image-to-video 工作流 JSON
+                    let workflow_json = json!({
+                        "nodes": {
+                            "1": {
+                                "class_type": "CheckpointLoaderSimple",
+                                "inputs": {
+                                    "ckpt_name": model
+                                }
+                            },
+                            "2": {
+                                "class_type": "LoadImage",
+                                "inputs": {
+                                    "image": check_path
+                                }
+                            },
+                            "3": {
+                                "class_type": "SVDImageToVideo",
+                                "inputs": {
+                                    "model": ["1", "MODEL"],
+                                    "vae": ["1", "VAE"],
+                                    "image": ["2", "IMAGE"],
+                                    "motion_bucket_id": motion_bucket_id,
+                                    "motion_scale": motion_scale,
+                                    "frames": frames,
+                                    "cfg": cfg,
+                                    "steps": steps,
+                                    "seed": seed
+                                }
+                            },
+                            "4": {
+                                "class_type": "VideoCombine",
+                                "inputs": {
+                                    "frames": ["3", "FRAMES"],
+                                    "fps": fps,
+                                    "filename_prefix": "comfyui_video"
+                                }
+                            }
+                        }
+                    });
+
+                    Ok(json!({
+                        "workflow": workflow_json,
+                        "node_count": 4,
+                        "params": {
+                            "image_path": check_path,
+                            "model": model,
+                            "frames": frames,
+                            "fps": fps,
+                            "motion_bucket_id": motion_bucket_id,
+                            "motion_scale": motion_scale,
+                            "cfg": cfg,
+                            "steps": steps,
+                            "seed": seed
+                        }
+                    }))
+                })
+            }
+        }),
+        &["DA", "PA"],
+    );
+
     // === 4. backend_sample ===
     executor.register(
         "backend_sample",

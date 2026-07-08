@@ -240,7 +240,7 @@ impl Node for SVDImageToVideoNode {
         let model = inputs.get("model")
             .ok_or_else(|| Error::ExecutionFailed("Missing model".to_string()))?
             .as_ref_str()?;
-        let _image = inputs.get("image")
+        let image_value = inputs.get("image")
             .ok_or_else(|| Error::ExecutionFailed("Missing image".to_string()))?;
         let frames = inputs.get("frames")
             .unwrap_or(&Value::Int(14))
@@ -269,18 +269,60 @@ impl Node for SVDImageToVideoNode {
 
         let model_path = Self::find_svd_model(model).unwrap_or_else(|| model.to_string());
 
+        // 从输入提取图像字节数据
+        let image_bytes = match image_value {
+            Value::Image(data) => data.clone(),
+            Value::String(path) => {
+                let path = if std::path::Path::new(path).exists() {
+                    path.to_string()
+                } else {
+                    format!("input/{}", path)
+                };
+                std::fs::read(&path).map_err(|e| {
+                    Error::ExecutionFailed(format!("Failed to read image '{}': {}", path, e))
+                })?
+            }
+            _ => return Err(Error::ExecutionFailed(
+                format!("Invalid image input type: expected Image or String, got {:?}", image_value)
+            )),
+        };
+
         info!("SVD Image-to-Video: model={}, frames={}, fps={}, motion={}, cfg={}, steps={}, seed={}, size={}x{}",
               model_path, frames, fps, motion_bucket_id, cfg, steps, seed, width, height);
 
-        // 调用后端生成视频 latent
-        // SVD 输入图像被编码为条件，生成多个帧的 latent
-        let latent_size = (frames as usize) * (width as usize / 8) * (height as usize / 8) * 4;
-        let video_latent = vec![0.0f32; latent_size];
+        // 构建 I2V 参数并调用后端
+        let params = crate::backend::I2VParams {
+            prompt: String::new(),
+            negative_prompt: String::new(),
+            input_image: image_bytes,
+            width: width as usize,
+            height: height as usize,
+            frames: frames as usize,
+            fps: fps as usize,
+            motion_bucket_id: motion_bucket_id as i32,
+            motion_scale: 1024.0,
+            steps: steps as usize,
+            cfg: cfg as f32,
+            seed: seed as usize,
+            model_path: model_path.clone(),
+        };
 
-        Ok(HashMap::from([
-            ("LATENT".to_string(), Value::Latent(video_latent)),
-            ("VAE".to_string(), Value::Vae(model_path.clone())),
-        ]))
+        match self.backend_router.image_to_video(params).await {
+            Ok(video_data) => {
+                info!("SVD video generated: {} bytes", video_data.len());
+                Ok(HashMap::from([
+                    ("LATENT".to_string(), Value::Video(video_data.clone())),
+                    ("VAE".to_string(), Value::Vae(model_path.clone())),
+                    ("FRAMES".to_string(), Value::Video(video_data)),
+                ]))
+            }
+            Err(e) => {
+                Err(Error::BackendError(format!(
+                    "SVD image_to_video failed: {}. Ensure SVD model '{}' exists and sd-cli supports video mode.",
+                    e, model_path
+                )))
+            }
+        }
     }
 }
 
@@ -1355,7 +1397,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_svd_image_to_video() {
+    async fn test_svd_image_to_video_no_backend() {
+        // 无后端配置时应返回明确错误，而非静默返回全零数据
         let mut node = SVDImageToVideoNode::new();
         let mut inputs = HashMap::new();
         inputs.insert("model".to_string(), Value::Model("svd.safetensors".to_string()));
@@ -1366,15 +1409,12 @@ mod tests {
         inputs.insert("height".to_string(), Value::Int(576));
         inputs.insert("steps".to_string(), Value::Int(20));
 
-        let result = node.execute(inputs).await.unwrap();
-        assert!(result.contains_key("LATENT"));
-        assert!(result.contains_key("VAE"));
-
-        if let Value::Latent(data) = &result["LATENT"] {
-            // frames * (width/8) * (height/8) * 4
-            let expected = 14 * (1024 / 8) * (576 / 8) * 4;
-            assert_eq!(data.len(), expected);
-        }
+        let result = node.execute(inputs).await;
+        // 无后端时应该返回错误
+        assert!(result.is_err(), "SVD without backend should return error, not silent zero latent");
+        let err_msg = format!("{}", result.unwrap_err());
+        assert!(err_msg.contains("SVD") || err_msg.contains("backend") || err_msg.contains("failed"),
+            "Error should mention SVD/backend failure, got: {}", err_msg);
     }
 
     #[tokio::test]

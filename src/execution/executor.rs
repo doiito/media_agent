@@ -32,6 +32,16 @@ impl PromptExecutor {
         }
     }
 
+    /// 使用指定的 BackendRouter 创建执行器（让视频节点能调用实际后端）
+    pub fn with_backend(router: Arc<BackendRouter>) -> Self {
+        Self {
+            node_registry: Arc::new(NodeRegistry::with_backend(router)),
+            backend_router: Arc::new(Mutex::new(BackendRouter::new())),
+            cache: HierarchicalCache::new(),
+            interrupted: Arc::new(StdMutex::new(false)),
+        }
+    }
+
     /// 执行工作流
     pub async fn execute(&mut self, workflow: &Workflow) -> Result<ExecutionResult, Error> {
         // 1. 验证工作流
