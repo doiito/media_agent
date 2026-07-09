@@ -337,12 +337,34 @@ impl WorkflowValidator {
                     ("images".to_string(), DataType::IMAGE),
                     ("frame_rate".to_string(), DataType::INT),
                     ("format".to_string(), DataType::STRING),
-                    ("codec".to_string(), DataType::STRING),
+                    ("codec".to_string(), DataType::FLOAT),
                     ("quality".to_string(), DataType::FLOAT),
                     ("filename_prefix".to_string(), DataType::STRING),
                 ]),
                 output_types: HashMap::new(),
                 required_inputs: HashSet::new(),
+            },
+        );
+
+        // SVDImageToVideo（图生视频）
+        nodes.insert(
+            "SVDImageToVideo".to_string(),
+            NodeDefinition {
+                class_type: "SVDImageToVideo".to_string(),
+                input_types: HashMap::from([
+                    ("model".to_string(), DataType::MODEL),
+                    ("image".to_string(), DataType::IMAGE),
+                    ("frames".to_string(), DataType::INT),
+                    ("fps".to_string(), DataType::INT),
+                    ("motion_bucket_id".to_string(), DataType::INT),
+                    ("cfg".to_string(), DataType::FLOAT),
+                    ("steps".to_string(), DataType::INT),
+                    ("seed".to_string(), DataType::INT),
+                ]),
+                output_types: HashMap::from([
+                    ("FRAMES".to_string(), DataType::IMAGE),
+                ]),
+                required_inputs: HashSet::from(["model".to_string(), "image".to_string()]),
             },
         );
 

@@ -8,6 +8,12 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use log::{info, debug, warn};
 
+/// Magic header 标识 Latent 中携带的是原始 Image 字节（而非真实 latent 向量）
+///
+/// VAEEncode 在输入为 Image 时，将字节编码到 Latent 中以便 KSampler 的 I2I 模式还原。
+/// 格式：[MAGIC, width, height, channels, ...image_bytes_as_f32]
+pub const IMAGE_LATENT_MAGIC: f32 = -999999.0;
+
 // ============================================================================
 // CheckpointLoader 节点
 // ============================================================================
@@ -227,23 +233,13 @@ impl Node for CLIPTextEncodeNode {
 
         debug!("Encoding text: {} (length: {})", text, text.len());
 
-        // 检查缓存
-        let cache_key = text.to_string();
-        if let Some(cached) = self.cache.get(&cache_key) {
+        // 检查缓存（缓存仅用于避免重复编码，Conditioning 直接携带文本）
+        if self.cache.contains_key(text) {
             debug!("Using cached conditioning for text");
-            return Ok(HashMap::from([
-                ("CONDITIONING".to_string(), Value::Conditioning(cached.clone())),
-            ]));
         }
 
-        // 编码文本
-        let conditioning = self.encode_text_simple(text);
-
-        // 缓存
-        self.cache.insert(cache_key, conditioning.clone());
-
         Ok(HashMap::from([
-            ("CONDITIONING".to_string(), Value::Conditioning(conditioning)),
+            ("CONDITIONING".to_string(), Value::Conditioning(text.to_string())),
         ]))
     }
 }
@@ -394,11 +390,11 @@ impl Node for KSamplerNode {
         let cfg = inputs.get("cfg")
             .unwrap_or(&Value::Float(7.0))
             .as_float()?;
-        let sampler_name_default = Value::String("euler".to_string());
+        let sampler_name_default = Value::String("dpm++2m".to_string());
         let sampler_name = inputs.get("sampler_name")
             .unwrap_or(&sampler_name_default)
             .as_str()?;
-        let scheduler_default = Value::String("normal".to_string());
+        let scheduler_default = Value::String("karras".to_string());
         let scheduler = inputs.get("scheduler")
             .unwrap_or(&scheduler_default)
             .as_str()?;
@@ -576,20 +572,37 @@ impl Node for VAEDecodeNode {
 
         debug!("VAEDecode with vae: {}", vae);
 
-        // 在实际实现中，这里会调用stable-diffusion.cpp的VAE解码
-        // 占位符：将latent转换为图像数据
+        // KSampler 走 sd-cli 全流程时返回 Value::Image，此处直接透传
+        // 当输入是 Image-encoded latent（VAEEncode 从 Image 生成）时，还原原始字节
         let image_data = match &samples {
-            Value::Latent(latent) => {
-                // 潜在空间是[batch, 4, h/8, w/8]
-                // 输出图像是[batch, h, w, 3]
-                let latent_size = latent.len();
-                // 假设4通道，latent空间是1/8
-                let pixels = latent_size / 4;
-                let dim = (pixels as f64).sqrt() as usize * 8;
-                let image_size = dim * dim * 3;
-                vec![128u8; image_size] // 灰色图像占位符
+            Value::Image(data) => {
+                if data.is_empty() {
+                    vec![128u8; 512 * 512 * 3]
+                } else {
+                    data.clone()
+                }
             }
-            Value::Image(data) => data.clone(),
+            Value::Latent(latent) => {
+                // 检测 Image-encoded latent（magic header）
+                if latent.len() >= 4 && (latent[0] - IMAGE_LATENT_MAGIC).abs() < 0.5 {
+                    let width = latent[1] as usize;
+                    let height = latent[2] as usize;
+                    let channels = latent[3] as usize;
+                    let expected = width * height * channels;
+                    if latent.len() >= 4 + expected && channels == 3 && width > 0 && height > 0 {
+                        latent[4..4 + expected].iter().map(|&f| f as u8).collect()
+                    } else {
+                        vec![128u8; 512 * 512 * 3]
+                    }
+                } else {
+                    // 真实 latent 向量：生成占位符图像（sd-cli 全流程不会走到这里）
+                    let latent_size = latent.len();
+                    let pixels = latent_size / 4;
+                    let dim = (pixels as f64).sqrt() as usize * 8;
+                    let image_size = if dim > 0 { dim * dim * 3 } else { 512 * 512 * 3 };
+                    vec![128u8; image_size]
+                }
+            }
             _ => vec![128u8; 512 * 512 * 3],
         };
 
@@ -658,15 +671,23 @@ impl Node for VAEEncodeNode {
             .ok_or_else(|| Error::ExecutionFailed("Missing vae".to_string()))?
             .as_ref_str()?;
 
-        // 在实际实现中，这里会调用stable-diffusion.cpp的VAE编码
+        // 将 Image 编码到 Latent 中
+        // 当输入是 Image 时，使用 magic header 将原始字节携带到 Latent，
+        // 以便下游 KSampler 的 I2I 模式能还原真实图像（而非占位符灰色图）
         let latent = match &pixels {
             Value::Image(data) => {
-                // 图像 -> latent (1/8尺寸, 4通道)
-                let pixels_count = data.len() / 3; // RGB
+                let pixels_count = data.len() / 3;
                 let dim = (pixels_count as f64).sqrt() as usize;
-                let latent_dim = dim / 8;
-                let latent_size = latent_dim * latent_dim * 4;
-                vec![0.0f32; latent_size]
+                // magic header: [MAGIC, width, height, channels, ...image_bytes_as_f32]
+                let mut encoded = Vec::with_capacity(4 + data.len());
+                encoded.push(crate::node::core_nodes::IMAGE_LATENT_MAGIC);
+                encoded.push(dim as f32);
+                encoded.push(dim as f32);
+                encoded.push(3.0);
+                for &b in data {
+                    encoded.push(b as f32);
+                }
+                encoded
             }
             Value::Latent(data) => data.clone(),
             _ => vec![0.0f32; 64 * 64 * 4],
@@ -921,8 +942,8 @@ mod tests {
         let result = node.execute(inputs).await.unwrap();
         assert!(result.contains_key("CONDITIONING"));
 
-        if let Value::Conditioning(cond) = &result["CONDITIONING"] {
-            assert_eq!(cond.len(), 768);
+        if let Value::Conditioning(text) = &result["CONDITIONING"] {
+            assert_eq!(text, "a cat");
         } else {
             panic!("Expected Conditioning value");
         }

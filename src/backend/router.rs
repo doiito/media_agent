@@ -82,15 +82,57 @@ impl BackendRouter {
         })
     }
 
-    /// 文生视频
+    /// 文生视频（组合路径：text_to_image → image_to_video）
+    ///
+    /// SVD 模型不支持直接的 text_to_video，因此采用两步组合：
+    /// 1. text_to_image 生成首帧图像
+    /// 2. image_to_video 将首帧动画化为视频
     pub async fn text_to_video(&self, params: T2VParams) -> Result<Vec<u8>, Error> {
         let backend = self.sd_cpp.as_ref().ok_or_else(|| {
             Error::BackendError("stable-diffusion.cpp backend not configured".to_string())
         })?;
 
-        backend.text_to_video(params).await.map_err(|e| {
-            Error::BackendError(format!("T2V failed: {}", e))
-        })
+        // Step 1: text_to_image 生成首帧
+        let t2i_params = crate::backend::T2IParams {
+            prompt: params.prompt.clone(),
+            negative_prompt: params.negative_prompt.clone(),
+            width: params.width,
+            height: params.height,
+            steps: params.steps,
+            cfg: params.cfg,
+            sampler: "dpm++2m_karras".to_string(),
+            seed: params.seed,
+            model_path: params.model_path.clone(),
+        };
+
+        info!("T2V combo: Step 1 - generating first frame via T2I");
+        let first_frame = backend.text_to_image(t2i_params).await.map_err(|e| {
+            Error::BackendError(format!("T2V combo T2I step failed: {}", e))
+        })?;
+
+        // Step 2: image_to_video 动画化首帧
+        let i2v_params = crate::backend::I2VParams {
+            prompt: params.prompt.clone(),
+            negative_prompt: params.negative_prompt.clone(),
+            input_image: first_frame,
+            width: params.width,
+            height: params.height,
+            frames: params.frames,
+            fps: params.fps,
+            motion_bucket_id: 127,
+            motion_scale: 1024.0,
+            steps: params.steps,
+            cfg: 2.5, // SVD 推荐 cfg=2.5
+            seed: params.seed,
+            model_path: params.model_path.clone(),
+        };
+
+        info!("T2V combo: Step 2 - animating first frame via I2V (frames={}, fps={})", params.frames, params.fps);
+        let video_data = backend.image_to_video(i2v_params).await.map_err(|e| {
+            Error::BackendError(format!("T2V combo I2V step failed: {}", e))
+        })?;
+
+        Ok(video_data)
     }
 
     /// 图生视频（SVD）
@@ -143,7 +185,7 @@ impl BackendRouter {
         steps: i64,
         cfg: f64,
         sampler: &str,
-        _scheduler: &str,
+        scheduler: &str,
         denoise: f64,
     ) -> Result<Value, Error> {
         // 从Conditioning提取提示词
@@ -152,6 +194,9 @@ impl BackendRouter {
 
         // 从Latent获取尺寸信息（如果有）
         let (width, height) = extract_size_from_latent(&latent);
+
+        // 合并 sampler + scheduler → sd-cli 接受的格式（如 "dpm++2m" + "karras" → "dpm++2m_karras"）
+        let sampling_method = merge_sampler_scheduler(sampler, scheduler);
 
         // 检查是否有输入图像（图生图模式）
         let has_input_image = matches!(&latent, Value::Latent(l) if !l.is_empty() && l.len() > 4);
@@ -166,6 +211,9 @@ impl BackendRouter {
                 denoise: denoise as f32,
                 steps: steps as usize,
                 cfg: cfg as f32,
+                sampler: sampling_method,
+                width,
+                height,
                 seed: seed as usize,
                 model_path: model.to_string(),
             };
@@ -182,7 +230,7 @@ impl BackendRouter {
                 height,
                 steps: steps as usize,
                 cfg: cfg as f32,
-                sampler: sampler.to_string(),
+                sampler: sampling_method,
                 seed: seed as usize,
                 model_path: model.to_string(),
             };
@@ -282,17 +330,41 @@ impl Default for BackendRouter {
 /// 从Conditioning中提取提示词
 fn extract_prompt_from_conditioning(value: &Value) -> String {
     match value {
-        Value::Conditioning(data) => {
-            // 实际实现需要解析conditioning张量
-            // 这里返回一个占位符
-            if data.is_empty() {
-                String::new()
-            } else {
-                "encoded prompt".to_string()
-            }
-        }
+        Value::Conditioning(text) => text.clone(),
         Value::String(s) => s.clone(),
         _ => String::new(),
+    }
+}
+
+/// 合并 sampler + scheduler → sd-cli 接受的 --sampling-method 格式
+///
+/// ComfyUI 的 KSampler 将 sampler_name 和 scheduler 分开传递，而 sd-cli 接受合并格式：
+/// - "euler" + "normal" → "euler"
+/// - "dpm++2m" + "karras" → "dpm++2m_karras"
+/// - "dpm++sde" + "karras" → "dpm++sde_karras"
+/// - "euler" + "karras" → "euler_karras"
+///
+/// 规则：当 scheduler 不是 "normal"/"simple"/"" 时，追加 "_{scheduler}" 后缀
+/// （若 sampler 已经以该后缀结尾则不再重复追加）
+fn merge_sampler_scheduler(sampler: &str, scheduler: &str) -> String {
+    let sampler = sampler.trim();
+    let scheduler = scheduler.trim();
+
+    // 不需要后缀的调度器
+    let no_suffix = matches!(
+        scheduler.to_lowercase().as_str(),
+        "" | "normal" | "simple" | "ddim_uniform" | "beta"
+    );
+
+    if no_suffix {
+        return sampler.to_string();
+    }
+
+    let suffix = format!("_{}", scheduler.to_lowercase());
+    if sampler.to_lowercase().ends_with(&suffix) {
+        sampler.to_string()
+    } else {
+        format!("{}{}", sampler, suffix)
     }
 }
 
@@ -331,14 +403,33 @@ fn extract_size_from_latent(value: &Value) -> (usize, usize) {
 }
 
 /// 从Latent中提取图像数据（使用 VAE 解码）
-/// 
+///
 /// 将 latent [4, H/8, W/8] 解码为 RGB 图像 [3, H, W]
+///
+/// 特殊情况：如果 Latent 以 IMAGE_LATENT_MAGIC 开头，说明 VAEEncode 将原始
+/// Image 字节编码到了 Latent 中，此时直接还原字节（无需 VAE 解码）
 fn extract_image_from_latent(value: &Value) -> Vec<u8> {
     match value {
         Value::Latent(data) => {
+            // 检测 Image-encoded latent（magic header）
+            if data.len() >= 4 && (data[0] - crate::node::core_nodes::IMAGE_LATENT_MAGIC).abs() < 0.5 {
+                let width = data[1] as usize;
+                let height = data[2] as usize;
+                let channels = data[3] as usize;
+                let expected_bytes = width * height * channels;
+                let available = data.len().saturating_sub(4);
+                if available >= expected_bytes && channels == 3 && width > 0 && height > 0 {
+                    return data[4..4 + expected_bytes]
+                        .iter()
+                        .map(|&f| f as u8)
+                        .collect();
+                }
+                // magic header 存在但数据不完整，回退到 VAE 解码
+            }
+
             let (width, height) = extract_size_from_latent(value);
             let vae_scale_factor = 0.18125; // SD VAE 标准缩放因子
-            
+
             // 使用双线性插值 VAE 解码
             decode_latent_bilinear(data, width, height, vae_scale_factor)
         }
@@ -436,11 +527,11 @@ mod tests {
     fn test_extract_prompt() {
         assert_eq!(extract_prompt_from_conditioning(&Value::String("hello".to_string())), "hello");
 
-        let empty_cond = Value::Conditioning(vec![]);
+        let empty_cond = Value::Conditioning(String::new());
         assert_eq!(extract_prompt_from_conditioning(&empty_cond), "");
 
-        let cond = Value::Conditioning(vec![0.1, 0.2]);
-        assert_eq!(extract_prompt_from_conditioning(&cond), "encoded prompt");
+        let cond = Value::Conditioning("a cute cat".to_string());
+        assert_eq!(extract_prompt_from_conditioning(&cond), "a cute cat");
     }
 
     #[test]
@@ -464,5 +555,28 @@ mod tests {
         let router2 = BackendRouter::from_env();
         assert!(router2.sd_cpp.is_some());
         assert!(router2.llama_cpp.is_some());
+    }
+
+    #[test]
+    fn test_merge_sampler_scheduler() {
+        // normal/simple 调度器不加后缀
+        assert_eq!(merge_sampler_scheduler("euler", "normal"), "euler");
+        assert_eq!(merge_sampler_scheduler("euler", "simple"), "euler");
+        assert_eq!(merge_sampler_scheduler("euler", ""), "euler");
+
+        // karras 调度器追加后缀
+        assert_eq!(merge_sampler_scheduler("dpm++2m", "karras"), "dpm++2m_karras");
+        assert_eq!(merge_sampler_scheduler("dpm++sde", "karras"), "dpm++sde_karras");
+        assert_eq!(merge_sampler_scheduler("euler", "karras"), "euler_karras");
+
+        // 大小写不敏感
+        assert_eq!(merge_sampler_scheduler("dpm++2m", "Karras"), "dpm++2m_karras");
+        assert_eq!(merge_sampler_scheduler("DPM++2M", "karras"), "DPM++2M_karras");
+
+        // 已有后缀不重复追加
+        assert_eq!(merge_sampler_scheduler("dpm++2m_karras", "karras"), "dpm++2m_karras");
+
+        // 空格修剪
+        assert_eq!(merge_sampler_scheduler(" dpm++2m ", " karras "), "dpm++2m_karras");
     }
 }

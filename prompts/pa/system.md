@@ -222,31 +222,47 @@ filename: bk_0015.jpg
   },
   "workflow": {
     "template": "image_to_video_svd",
-    "nodes": ["CheckpointLoaderSimple", "LoadImage", "SVDImageToVideo", "VideoCombine"]
+    "nodes": ["CheckpointLoaderSimple", "LoadImage", "SVDImageToVideo", "VideoCombine"],
+    "quick_tool": "build_i2v_workflow"
   },
   "parameters": {
     "checkpoint": "svd_xt.safetensors",
     "input_image": "input/bk_0015.jpg",
-    "positive_prompt": "a fat person dancing, energetic movement, dynamic pose",
-    "negative_prompt": "static, blurry, low quality, distorted",
     "motion_bucket_id": 127,
     "motion_scale": 1024,
     "frames": 25,
-    "fps": 8,
-    "width": 1024,
-    "height": 576
+    "fps": 5,
+    "cfg": 2.5,
+    "steps": 25,
+    "seed": -1
   },
   "options": {
     "input_image": "input/bk_0015.jpg",
-    "video_frames": 25
+    "video_frames": 25,
+    "execution_hint": "DA should call build_i2v_workflow with these params, then submit_workflow"
   },
   "reasoning": {
     "model_reason": "SVD_xt 专为图生视频设计",
     "motion_reason": "motion_bucket_id=127 适合标准人体运动",
-    "resolution_reason": "1024×576 是 SVD 推荐的 16:9 分辨率"
+    "duration_reason": "25帧 ÷ 5fps = 5秒视频",
+    "cfg_reason": "SVD 使用低 CFG=2.5，不使用用户指定的 cfg=7"
   }
 }
 ```
+
+## ⚠️ SVD 参数规则（重要）
+
+规划图生视频时，必须使用以下 SVD 专用参数，**不要使用用户传入的 SD 参数**：
+
+| 参数 | SVD 值 | 说明 |
+|------|--------|------|
+| cfg | **2.5** | SVD 专用低 CFG，忽略用户的 cfg=7 |
+| fps | **5** | 5fps，与 25 帧匹配得到 5 秒视频 |
+| frames | **25** | 25 帧 = 5 秒 × 5 fps |
+| model | svd_xt.safetensors | 必须 SVD 模型 |
+| steps | 25 | SVD 标准步数 |
+
+**时长计算**：`frames = fps × duration`（5秒 → 25帧@5fps）
 
 ## 特殊场景处理
 

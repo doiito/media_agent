@@ -99,6 +99,7 @@ fn test_sd_cli_exists() {
 
 /// 测试文生图基础功能（真实生成）
 #[test]
+#[ignore = "requires GPU for real SD generation; run with --ignored"]
 fn test_text_to_image_real() {
     if !model_exists() || !sd_cli_exists() {
         println!("SKIP: Model or sd-cli not available");
@@ -146,6 +147,7 @@ fn test_text_to_image_real() {
 
 /// 测试多张图片生成（批量）
 #[test]
+#[ignore = "requires GPU for real SD generation; run with --ignored"]
 fn test_batch_image_generation() {
     if !model_exists() || !sd_cli_exists() {
         println!("SKIP: Model or sd-cli not available");
@@ -189,6 +191,7 @@ fn test_batch_image_generation() {
 
 /// 测试不同步数的效果
 #[test]
+#[ignore = "requires GPU for real SD generation; run with --ignored"]
 fn test_different_step_counts() {
     if !model_exists() || !sd_cli_exists() {
         println!("SKIP: Model or sd-cli not available");
@@ -228,6 +231,7 @@ fn test_different_step_counts() {
 
 /// 测试不同尺寸
 #[test]
+#[ignore = "requires GPU for real SD generation; run with --ignored"]
 fn test_different_sizes() {
     if !model_exists() || !sd_cli_exists() {
         println!("SKIP: Model or sd-cli not available");
@@ -271,6 +275,7 @@ fn test_different_sizes() {
 
 /// 测试高质量生成（更多步数、更大尺寸）
 #[test]
+#[ignore = "requires GPU for real SD generation; run with --ignored"]
 fn test_high_quality_generation() {
     if !model_exists() || !sd_cli_exists() {
         println!("SKIP: Model or sd-cli not available");
@@ -311,6 +316,7 @@ fn test_high_quality_generation() {
 
 /// 测试 Agent 通过 LLM 解析意图后调用图片生成
 #[tokio::test]
+#[ignore = "requires GPU and LLM API key; run with --ignored"]
 async fn test_agent_image_generation_integration() {
     if !model_exists() || !sd_cli_exists() {
         println!("SKIP: Model or sd-cli not available");

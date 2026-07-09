@@ -3,15 +3,15 @@
 
 use std::sync::Arc;
 use std::path::Path;
-use glidinghorse::core::workflow::{load_workflow_jsonld, build_dag, DagEngine, WorkflowDag};
+use glidinghorse::core::workflow::{load_workflow_jsonld, build_dag};
+use glidinghorse::core::workflow::adapter::dag_to_execution_plan;
 use glidinghorse::core::agent_runner::TaskResult;
 
-/// 执行 Agent 工作流
+/// 执行 Agent 工作流（新版 API，通过 SupervisorAgent）
 pub async fn execute_agent_workflow(
-    runner: Arc<glidinghorse::core::AgentRunner>,
+    supervisor: &mut glidinghorse::core::SupervisorAgent,
     workflow_path: &str,
     user_input: &str,
-    max_iterations: u32,
 ) -> Result<TaskResult, String> {
     // 读取 JSON-LD 工作流文件
     let jsonld = std::fs::read_to_string(workflow_path)
@@ -25,63 +25,18 @@ pub async fn execute_agent_workflow(
     let dag = build_dag(&workflow_def)
         .map_err(|e| format!("Failed to build DAG: {}", e))?;
 
-    // 创建 DagEngine
-    let engine = DagEngine::new(runner, max_iterations);
-
-    // 生成任务 IRI
+    // 将 DAG 转换为 ExecutionPlan（使用 adapter）
     let task_iri = format!("iri://task/{}", uuid::Uuid::new_v4());
+    let plan = dag_to_execution_plan(&dag, &workflow_def, &task_iri);
 
-    // 执行 DAG
-    let results = engine.execute(&dag, &task_iri, user_input).await
-        .map_err(|e| format!("DAG execution failed: {}", e))?;
+    // 初始化 5W2H
+    let five_w2h_iri = format!("iri://5w2h/{}", uuid::Uuid::new_v4());
+    let five_w2h = glidinghorse::core::five_w2h::Task5W2H::default();
 
-    // 转换为 TaskResult
-    Ok(convert_to_task_result(results, &task_iri))
-}
-
-/// 转换执行结果为 TaskResult
-fn convert_to_task_result(
-    results: Vec<glidinghorse::core::workflow::NodeResult>,
-    task_iri: &str,
-) -> TaskResult {
-    let mut final_outputs = serde_json::Map::new();
-    let mut turn_count = 0;
-    let mut tool_call_count = 0;
-    let mut errors = vec![];
-
-    for result in results {
-        turn_count += result.turn_count;
-        tool_call_count += result.tool_call_count;
-
-        if let Some(err) = result.error {
-            errors.push(err);
-        }
-
-        if let Some(output) = result.output {
-            if let serde_json::Value::Object(map) = output {
-                for (k, v) in map {
-                    final_outputs.insert(k, v);
-                }
-            }
-        }
-    }
-
-    let status = if errors.is_empty() { "success" } else { "partial" };
-
-    TaskResult {
-        task_iri: task_iri.to_string(),
-        status: status.to_string(),
-        summary: "Workflow completed".to_string(),
-        output: Some(serde_json::Value::Object(final_outputs)),
-        jsonld_output: None,
-        artifacts: vec![],
-        errors,
-        turn_count,
-        tool_call_count,
-        five_w2h_updates: None,
-        tracked_actions: vec![],
-        archive_iri: None,
-    }
+    // 通过 SupervisorAgent 执行计划
+    supervisor.execute_plan(plan, &task_iri, user_input, five_w2h, &five_w2h_iri, None, None)
+        .await
+        .map_err(|e| format!("Workflow execution failed: {:?}", e))
 }
 
 /// 加载工作流模板

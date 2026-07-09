@@ -171,15 +171,15 @@ mod config_system_tests {
 
     #[test]
     fn test_config_env_override_port() {
+        // Test valid port override
         std::env::set_var("PORT", "9090");
         let mut config = AppConfig::default();
         config.merge_env_overrides();
         assert_eq!(config.server.port, 9090);
         std::env::remove_var("PORT");
-    }
 
-    #[test]
-    fn test_config_env_override_invalid_port() {
+        // Test invalid port — must run sequentially after the valid test above
+        // to avoid env var race conditions between parallel tests.
         std::env::set_var("PORT", "not-a-number");
         let mut config = AppConfig::default();
         config.merge_env_overrides();
@@ -1087,8 +1087,19 @@ mod backend_types_tests {
 
     #[test]
     fn test_sd_cpp_config_from_env() {
+        // from_env() loads from config.json first, then overrides with env vars.
+        // Verify that loading works (values are populated), not exact defaults.
         let config = SdCppConfig::from_env();
         assert!(!config.executable_path.is_empty());
+        assert!(!config.backend.is_empty());
+        assert!(config.timeout_secs > 0);
+        assert!(config.max_retries > 0);
+    }
+
+    #[test]
+    fn test_sd_cpp_config_default_values() {
+        // Verify hardcoded defaults (not affected by config.json)
+        let config = SdCppConfig::default();
         assert_eq!(config.backend, "cuda");
         assert_eq!(config.timeout_secs, 300);
         assert_eq!(config.max_retries, 3);
@@ -2562,7 +2573,9 @@ mod smart_node_execution_tests {
     use comfyui_rust_agent::node::image_processing::*;
     use comfyui_rust_agent::node::advanced_sampler::*;
     use comfyui_rust_agent::types::*;
+    use comfyui_rust_agent::backend::BackendRouter;
     use std::collections::HashMap;
+    use std::sync::Arc;
 
     fn make_string(v: &str) -> Value { Value::String(v.to_string()) }
     fn make_int(v: i64) -> Value { Value::Int(v) }
@@ -2570,11 +2583,12 @@ mod smart_node_execution_tests {
 
     #[tokio::test]
     async fn test_ksampler_execution_no_backend() {
-        let mut node = KSamplerNode::new();
+        let router = Arc::new(BackendRouter::new());
+        let mut node = KSamplerNode::with_backend(router);
         let mut inputs = HashMap::new();
         inputs.insert("model".to_string(), Value::Model("test".to_string()));
-        inputs.insert("positive".to_string(), Value::Conditioning(vec![0.5; 10]));
-        inputs.insert("negative".to_string(), Value::Conditioning(vec![-0.5; 10]));
+        inputs.insert("positive".to_string(), Value::Conditioning("a cat".to_string()));
+        inputs.insert("negative".to_string(), Value::Conditioning("blurry".to_string()));
         inputs.insert("latent_image".to_string(), Value::Latent(vec![0.0; 100]));
         inputs.insert("seed".to_string(), make_int(42));
         inputs.insert("steps".to_string(), make_int(20));
@@ -2670,11 +2684,12 @@ mod smart_node_execution_tests {
 
     #[tokio::test]
     async fn test_ksampler_advanced_execution() {
-        let mut node = KSamplerAdvancedNode::new();
+        let router = Arc::new(BackendRouter::new());
+        let mut node = KSamplerAdvancedNode::with_backend(router);
         let mut inputs = HashMap::new();
         inputs.insert("model".to_string(), Value::Model("test".to_string()));
-        inputs.insert("positive".to_string(), Value::Conditioning(vec![0.5; 10]));
-        inputs.insert("negative".to_string(), Value::Conditioning(vec![-0.5; 10]));
+        inputs.insert("positive".to_string(), Value::Conditioning("a cat".to_string()));
+        inputs.insert("negative".to_string(), Value::Conditioning("blurry".to_string()));
         inputs.insert("latent_image".to_string(), Value::Latent(vec![0.0; 100]));
         inputs.insert("seed".to_string(), make_int(42));
         inputs.insert("steps".to_string(), make_int(20));

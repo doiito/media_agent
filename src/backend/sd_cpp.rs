@@ -840,6 +840,7 @@ impl StableDiffusionCppBackend {
             .arg("--rng").arg(&self.config.rng_mode)
             .arg("--steps").arg(params.steps.to_string())
             .arg("--cfg-scale").arg(params.cfg.to_string())
+            .arg("--sampling-method").arg(&params.sampler)
             .arg("--width").arg(params.width.to_string())
             .arg("--height").arg(params.height.to_string())
             .arg("--seed").arg(params.seed.to_string());
@@ -852,8 +853,8 @@ impl StableDiffusionCppBackend {
         // flash attention is compiled in via GGML_CUDA_FA cmake option.
         // Add any model-specific args here if needed.
 
-        info!("Running sd-cli: {} --model {} --backend {} --steps {} --width {}x{}",
-            executable, model, self.config.backend, params.steps, params.width, params.height);
+        info!("Running sd-cli: {} --model {} --backend {} --steps {} --sampling-method {} --width {}x{}",
+            executable, model, self.config.backend, params.steps, params.sampler, params.width, params.height);
 
         let output = cmd.output().map_err(|e| {
             SdError::ProcessStartFailed(format!("Failed to run sd-cli: {}", e))
@@ -928,16 +929,18 @@ impl StableDiffusionCppBackend {
             .arg("--rng").arg(&self.config.rng_mode)
             .arg("--steps").arg(params.steps.to_string())
             .arg("--cfg-scale").arg(params.cfg.to_string())
-            .arg("--width").arg("512")
-            .arg("--height").arg("512")
+            .arg("--sampling-method").arg(&params.sampler)
+            .arg("--strength").arg(params.denoise.to_string())
+            .arg("--width").arg(params.width.to_string())
+            .arg("--height").arg(params.height.to_string())
             .arg("--seed").arg(params.seed.to_string());
 
         if !params.negative_prompt.is_empty() {
             cmd.arg("--negative-prompt").arg(&params.negative_prompt);
         }
 
-        info!("Running sd-cli img2img: {} --backend {} --steps {} --denoise {}",
-            executable, self.config.backend, params.steps, params.denoise);
+        info!("Running sd-cli img2img: {} --backend {} --steps {} --sampling-method {} --denoise {} --width {}x{}",
+            executable, self.config.backend, params.steps, params.sampler, params.denoise, params.width, params.height);
 
         let output = cmd.output().map_err(|e| {
             SdError::ProcessStartFailed(format!("Failed to run sd-cli: {}", e))

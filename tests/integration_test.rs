@@ -253,7 +253,7 @@ async fn test_clip_text_encode_caching() {
         _ => panic!("Expected Conditioning"),
     };
 
-    // 第二次编码相同文本 - 应该使用缓存
+    // 第二次编码相同文本 - 应该返回相同结果
     let result2 = encoder.execute(inputs).await.unwrap();
     let cond2 = match &result2["CONDITIONING"] {
         Value::Conditioning(c) => c.clone(),

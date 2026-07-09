@@ -116,6 +116,7 @@ fn test_workflow_template_valid_json() {
 // ============================================================================
 
 #[test]
+#[ignore = "requires GPU for real SD generation; run with --ignored"]
 fn test_text_to_image_small() {
     if !model_exists() || !sd_cli_exists() { println!("SKIP"); return; }
     std::fs::create_dir_all(OUTPUT_DIR).ok();
@@ -128,6 +129,7 @@ fn test_text_to_image_small() {
 }
 
 #[test]
+#[ignore = "requires GPU for real SD generation; run with --ignored"]
 fn test_text_to_image_medium() {
     if !model_exists() || !sd_cli_exists() { println!("SKIP"); return; }
     std::fs::create_dir_all(OUTPUT_DIR).ok();
@@ -140,6 +142,7 @@ fn test_text_to_image_medium() {
 }
 
 #[test]
+#[ignore = "requires GPU for real SD generation; run with --ignored"]
 fn test_text_to_image_large() {
     if !model_exists() || !sd_cli_exists() { println!("SKIP"); return; }
     std::fs::create_dir_all(OUTPUT_DIR).ok();
@@ -156,6 +159,7 @@ fn test_text_to_image_large() {
 // ============================================================================
 
 #[test]
+#[ignore = "requires GPU for real SD generation; run with --ignored"]
 fn test_sampler_euler() {
     if !model_exists() || !sd_cli_exists() { println!("SKIP"); return; }
     std::fs::create_dir_all(OUTPUT_DIR).ok();
@@ -168,6 +172,7 @@ fn test_sampler_euler() {
 }
 
 #[test]
+#[ignore = "requires GPU for real SD generation; run with --ignored"]
 fn test_sampler_euler_a() {
     if !model_exists() || !sd_cli_exists() { println!("SKIP"); return; }
     std::fs::create_dir_all(OUTPUT_DIR).ok();
@@ -196,6 +201,7 @@ fn test_sampler_euler_a() {
 }
 
 #[test]
+#[ignore = "requires GPU for real SD generation; run with --ignored"]
 fn test_sampler_dpmpp_2m() {
     if !model_exists() || !sd_cli_exists() { println!("SKIP"); return; }
     std::fs::create_dir_all(OUTPUT_DIR).ok();
@@ -366,18 +372,24 @@ fn test_all_skills_exist() {
 #[test]
 fn test_skills_valid_schema() {
     let skills_dir = "/dev-data/ai-test/media_agent/skills";
-    
+
     for entry in std::fs::read_dir(skills_dir).unwrap() {
         let entry = entry.unwrap();
         if entry.path().extension().map(|e| e == "jsonld").unwrap_or(false) {
             let content = std::fs::read_to_string(entry.path()).unwrap();
             let json: serde_json::Value = serde_json::from_str(&content).unwrap();
-            
-            // 验证基本 Skill schema
-            assert!(json["@type"].is_string(), "Missing @type in {}", entry.path().display());
-            assert!(json["name"].is_string(), "Missing name in {}", entry.path().display());
+
+            // 验证基本 Skill schema（JSON-LD 格式：@type 可以是字符串或数组）
+            let type_val = &json["@type"];
+            let type_valid = type_val.is_string() || type_val.is_array();
+            assert!(type_valid, "Missing or invalid @type in {}", entry.path().display());
+
+            // name 可以是 "name" 或 "schema:name"（JSON-LD vocabulary prefix）
+            let name_val = json.get("name").or_else(|| json.get("schema:name"));
+            assert!(name_val.map(|v| v.is_string()).unwrap_or(false),
+                "Missing name/schema:name in {}", entry.path().display());
         }
     }
-    
+
     println!("All skills have valid schema!");
 }

@@ -136,10 +136,13 @@ media_agent/
 
 ### 前置依赖
 
+- **Rust** (1.75+，需要 C++20 兼容编译器 - 推荐 Clang 用于 gliding_horse 原生依赖)
 - **protoc** (Protobuf 编译器) — gliding_horse Agent OS 依赖，用于编译 gRPC proto 文件
   - Linux: `sudo apt install protobuf-compiler`
   - macOS: `brew install protobuf`
   - Windows: 从 [protobuf releases](https://github.com/protocolbuffers/protobuf/releases) 下载
+- **sd-cli** (stable-diffusion.cpp CLI) — 用于图片/视频生成
+- **llama.cpp** (可选) — 用于 LLM 文本生成
 
 ### 克隆
 
@@ -158,21 +161,47 @@ git submodule update --init --recursive
 ### 编译
 
 ```bash
+# 设置编译器环境（Clang 用于 gliding_horse 原生依赖）
+export CC=clang
+export CXX=clang++
+export CCACHE_DISABLE=1
+
+# 编译 release 版本
 cargo build --release
 
-# 运行测试
+# 运行测试 (215 个测试)
 cargo test --lib
 ```
 
-### 运行
+### 初始化与运行
 
 ```bash
+# 初始化系统（下载模型、创建目录）
+cargo run --release --bin init
+
 # 启动服务
-cargo run --release
+cargo run --release --bin comfyui-server
 
 # 或指定配置
-cargo run --release -- --config config/agent.yaml
+cargo run --release --bin comfyui-server -- --config config/agent.yaml
 ```
+
+### 视频生成说明
+
+SVD (Stable Video Diffusion) 仅支持 **图生视频**。对于 **文生视频**，系统自动采用组合路径：
+
+```
+文生视频 = 文生图 → 图生视频
+```
+
+1. 首先通过 text_to_image 生成首帧图像
+2. 然后通过 image_to_video (SVD) 动画化
+
+推荐视频参数 (SVD)：
+- **cfg**: 2.5（非用户指定的 7）
+- **fps**: 5
+- **frames**: 25（5秒视频）
+- **motion_bucket_id**: 127
 
 ## 测试覆盖
 
@@ -181,10 +210,12 @@ cargo run --release -- --config config/agent.yaml
 | 模型管理 | 56 |
 | 多后端支持 | 17 |
 | 实时预览 | 18 |
-| 节点系统 | 40+ |
+| 节点系统 | 60+ |
 | 工作流引擎 | 15+ |
 | 监控系统 | 10+ |
-| **总计** | **188** |
+| 后端路由 | 5+ |
+| Conditioning 系统 | 5+ |
+| **总计** | **215** |
 
 ## API 接口
 

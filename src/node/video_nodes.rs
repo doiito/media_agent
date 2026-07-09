@@ -1566,8 +1566,8 @@ mod tests {
         let mut inputs = HashMap::new();
         inputs.insert("model".to_string(), Value::Model("v1-5.safetensors".to_string()));
         inputs.insert("motion_module".to_string(), Value::String("mm_sd_v15.ckpt".to_string()));
-        inputs.insert("positive".to_string(), Value::Conditioning(vec![0.5; 100]));
-        inputs.insert("negative".to_string(), Value::Conditioning(vec![0.0; 100]));
+        inputs.insert("positive".to_string(), Value::Conditioning("a dancing cat".to_string()));
+        inputs.insert("negative".to_string(), Value::Conditioning("blurry".to_string()));
         inputs.insert("latent".to_string(), Value::Latent(vec![0.1; 100]));
         inputs.insert("frames".to_string(), Value::Int(16));
 

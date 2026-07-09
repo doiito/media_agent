@@ -151,8 +151,7 @@ impl AgentEngine {
 
         // 注册 ComfyUI 工具到 runner.tool_executor
         {
-            let mut tool_executor = runner.tool_executor.write()
-                .expect("Failed to lock tool_executor");
+            let mut tool_executor = runner.tool_executor.write().expect("Failed to acquire tool_executor lock");
             crate::agent::tools::register_comfyui_tools(&mut tool_executor, Arc::new(self.context.clone()));
 
             // 注册智能工具（SkillGraph + Discovery + Evolution）

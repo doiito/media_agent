@@ -108,8 +108,8 @@ pub enum Value {
     Video(Vec<u8>),
     /// 音频数据（内部使用）
     Audio(Vec<f32>),
-    /// Conditioning数据（内部使用）
-    Conditioning(Vec<f32>),
+    /// Conditioning数据（携带 prompt 文本，sd-cli 自带 CLIP 编码）
+    Conditioning(String),
     /// ControlNet引用（内部使用）
     ControlNet(String),
 }

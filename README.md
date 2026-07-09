@@ -136,10 +136,13 @@ media_agent/
 
 ### Prerequisites
 
+- **Rust** (1.75+ with C++20 compatible compiler - Clang recommended for gliding_horse native deps)
 - **protoc** (Protobuf compiler) — required by gliding_horse Agent OS for gRPC proto compilation
   - Linux: `sudo apt install protobuf-compiler`
   - macOS: `brew install protobuf`
   - Windows: download from [protobuf releases](https://github.com/protocolbuffers/protobuf/releases)
+- **sd-cli** (stable-diffusion.cpp CLI) — for image/video generation
+- **llama.cpp** (optional) — for LLM text generation
 
 ### Clone
 
@@ -158,21 +161,47 @@ git submodule update --init --recursive
 ### Build
 
 ```bash
+# Set compiler environment (Clang for gliding_horse native deps)
+export CC=clang
+export CXX=clang++
+export CCACHE_DISABLE=1
+
+# Build release
 cargo build --release
 
-# Run tests
+# Run tests (215 tests)
 cargo test --lib
 ```
 
-### Run
+### Initialize & Run
 
 ```bash
+# Initialize system (download models, create directories)
+cargo run --release --bin init
+
 # Start server
-cargo run --release
+cargo run --release --bin comfyui-server
 
 # Or with config
-cargo run --release -- --config config/agent.yaml
+cargo run --release --bin comfyui-server -- --config config/agent.yaml
 ```
+
+### Video Generation Notes
+
+SVD (Stable Video Diffusion) supports **image-to-video** only. For **text-to-video**, the system automatically uses a combination path:
+
+```
+text_to_video = text_to_image → image_to_video
+```
+
+1. First generates a first-frame image via text_to_image
+2. Then animates it via image_to_video (SVD)
+
+Recommended video parameters (SVD):
+- **cfg**: 2.5 (not user-specified 7)
+- **fps**: 5
+- **frames**: 25 (5 seconds video)
+- **motion_bucket_id**: 127
 
 ## Test Coverage
 
@@ -181,10 +210,12 @@ cargo run --release -- --config config/agent.yaml
 | Model Management | 56 |
 | Multi-Backend | 17 |
 | Real-time Preview | 18 |
-| Node System | 40+ |
+| Node System | 60+ |
 | Workflow Engine | 15+ |
 | Monitor System | 10+ |
-| **Total** | **188** |
+| Backend Router | 5+ |
+| Conditioning System | 5+ |
+| **Total** | **215** |
 
 ## API Reference
 

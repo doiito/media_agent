@@ -65,6 +65,10 @@ jobs:
           echo "PROTOC=$dest\bin\protoc.exe" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           & "$dest\bin\protoc.exe" --version
 
+      - name: Run tests (Linux only)
+        if: runner.os == 'Linux'
+        run: cargo test --lib --target ${{ matrix.target }}
+
       - name: Build
         run: cargo build --release --target ${{ matrix.target }}
 

@@ -73,7 +73,7 @@ mod node_system_tests {
         let out = node.execute(inputs).await.expect("CLIPTextEncode failed");
         assert!(out.contains_key("CONDITIONING"));
         match &out["CONDITIONING"] {
-            Value::Conditioning(data) => assert!(!data.is_empty()),
+            Value::Conditioning(text) => assert!(!text.is_empty()),
             _ => panic!("Expected Conditioning"),
         }
     }
@@ -177,7 +177,7 @@ mod node_system_tests {
     async fn test_controlnet_apply_node() {
         let mut node = ControlNetApplyNode;
         let mut inputs = HashMap::new();
-        inputs.insert("conditioning".to_string(), Value::Conditioning(vec![0.5f32; 64]));
+        inputs.insert("conditioning".to_string(), Value::Conditioning("a cat".to_string()));
         inputs.insert("control_net".to_string(), Value::ControlNet("cn-model".to_string()));
         inputs.insert("image".to_string(), Value::Image(vec![128u8; 64 * 64 * 3]));
         inputs.insert("strength".to_string(), make_float(1.0));
@@ -203,8 +203,8 @@ mod node_system_tests {
     async fn test_conditioning_combine_node() {
         let mut node = ConditioningCombineNode;
         let mut inputs = HashMap::new();
-        inputs.insert("conditioning_1".to_string(), Value::Conditioning(vec![0.5f32; 32]));
-        inputs.insert("conditioning_2".to_string(), Value::Conditioning(vec![0.3f32; 32]));
+        inputs.insert("conditioning_1".to_string(), Value::Conditioning("a cat".to_string()));
+        inputs.insert("conditioning_2".to_string(), Value::Conditioning("on a beach".to_string()));
 
         let out = node.execute(inputs).await.expect("ConditioningCombine failed");
         assert!(out.contains_key("CONDITIONING"));
@@ -214,8 +214,8 @@ mod node_system_tests {
     async fn test_conditioning_concat_node() {
         let mut node = ConditioningConcatNode;
         let mut inputs = HashMap::new();
-        inputs.insert("conditioning_to".to_string(), Value::Conditioning(vec![0.5f32; 32]));
-        inputs.insert("conditioning_from".to_string(), Value::Conditioning(vec![0.3f32; 32]));
+        inputs.insert("conditioning_to".to_string(), Value::Conditioning("a cat".to_string()));
+        inputs.insert("conditioning_from".to_string(), Value::Conditioning("on a beach".to_string()));
 
         let out = node.execute(inputs).await.expect("ConditioningConcat failed");
         assert!(out.contains_key("CONDITIONING"));

@@ -299,11 +299,64 @@ fn register_basic_tools(
                     let prompt_id = engine.submit(workflow, client_id.to_string()).await
                         .map_err(|e| format!("Failed to submit workflow: {}", e))?;
 
-                    Ok(json!({
-                        "prompt_id": prompt_id,
-                        "status": "submitted",
-                        "message": "Workflow submitted successfully"
-                    }))
+                    // 立即执行工作流（submit 只入队，必须调用 execute_next 才会真正执行）
+                    let exec_result = engine.execute_next().await
+                        .map_err(|e| format!("Failed to execute workflow: {}", e))?;
+
+                    match exec_result {
+                        Some(crate::types::ExecutionResult::Success(outputs)) => {
+                            // 提取输出文件路径（outputs 是 HashMap<NodeId, HashMap<String, Value>>）
+                            let mut output_files: Vec<String> = Vec::new();
+                            for node_outputs in outputs.values() {
+                                for val in node_outputs.values() {
+                                    match val {
+                                        crate::types::Value::Image(data) => {
+                                            output_files.push(format!("image: {} bytes", data.len()));
+                                        }
+                                        crate::types::Value::Video(data) => {
+                                            output_files.push(format!("video: {} bytes", data.len()));
+                                        }
+                                        crate::types::Value::String(s) => {
+                                            if s.ends_with(".png") || s.ends_with(".mp4") || s.ends_with(".gif") {
+                                                output_files.push(s.clone());
+                                            }
+                                        }
+                                        _ => {}
+                                    }
+                                }
+                            }
+
+                            Ok(json!({
+                                "prompt_id": prompt_id,
+                                "status": "success",
+                                "message": "Workflow executed successfully",
+                                "outputs": output_files,
+                                "output_count": output_files.len()
+                            }))
+                        }
+                        Some(crate::types::ExecutionResult::Failure(err)) => {
+                            Ok(json!({
+                                "prompt_id": prompt_id,
+                                "status": "failed",
+                                "error": err,
+                                "message": "Workflow execution failed"
+                            }))
+                        }
+                        Some(crate::types::ExecutionResult::Pending) => {
+                            Ok(json!({
+                                "prompt_id": prompt_id,
+                                "status": "pending",
+                                "message": "Workflow execution pending"
+                            }))
+                        }
+                        None => {
+                            Ok(json!({
+                                "prompt_id": prompt_id,
+                                "status": "queued",
+                                "message": "Workflow queued but not executed"
+                            }))
+                        }
+                    }
                 })
             }
         }),
@@ -319,14 +372,14 @@ fn register_basic_tools(
             "properties": {
                 "prompt": {"type": "string", "description": "Positive prompt"},
                 "negative_prompt": {"type": "string", "default": ""},
-                "width": {"type": "integer", "default": 1024},
-                "height": {"type": "integer", "default": 1024},
+                "width": {"type": "integer", "default": 512},
+                "height": {"type": "integer", "default": 512},
                 "steps": {"type": "integer", "default": 20},
                 "cfg": {"type": "number", "default": 7.0},
                 "seed": {"type": "integer", "default": -1},
                 "model": {"type": "string", "default": "v1-5-pruned-emaonly.safetensors"},
-                "sampler": {"type": "string", "default": "euler"},
-                "scheduler": {"type": "string", "default": "normal"}
+                "sampler": {"type": "string", "default": "dpm++2m"},
+                "scheduler": {"type": "string", "default": "karras"}
             },
             "required": ["prompt"]
         }),
@@ -345,11 +398,11 @@ fn register_basic_tools(
 
                     let width = input.get("width")
                         .and_then(|v| v.as_u64())
-                        .unwrap_or(1024) as usize;
+                        .unwrap_or(512) as usize;
 
                     let height = input.get("height")
                         .and_then(|v| v.as_u64())
-                        .unwrap_or(1024) as usize;
+                        .unwrap_or(512) as usize;
 
                     let steps = input.get("steps")
                         .and_then(|v| v.as_u64())
@@ -488,9 +541,8 @@ fn register_basic_tools(
                 "image_path": {"type": "string", "description": "Input image path (e.g., 'input/bk_0015.jpg')"},
                 "model": {"type": "string", "default": "svd_xt.safetensors", "description": "SVD checkpoint name"},
                 "frames": {"type": "integer", "default": 25, "description": "Number of video frames (25 = ~5s at 5fps)"},
-                "fps": {"type": "integer", "default": 8, "description": "Output video FPS"},
+                "fps": {"type": "integer", "default": 5, "description": "Output video FPS (5fps × 5s = 25 frames)"},
                 "motion_bucket_id": {"type": "integer", "default": 127, "description": "Motion intensity (127 = standard)"},
-                "motion_scale": {"type": "integer", "default": 1024, "description": "Motion amplitude"},
                 "cfg": {"type": "number", "default": 2.5, "description": "CFG scale for SVD"},
                 "steps": {"type": "integer", "default": 25, "description": "Sampling steps"},
                 "seed": {"type": "integer", "default": -1}
@@ -531,15 +583,11 @@ fn register_basic_tools(
 
                     let fps = input.get("fps")
                         .and_then(|v| v.as_u64())
-                        .unwrap_or(8) as usize;
+                        .unwrap_or(5) as usize;
 
                     let motion_bucket_id = input.get("motion_bucket_id")
                         .and_then(|v| v.as_i64())
                         .unwrap_or(127) as i32;
-
-                    let motion_scale = input.get("motion_scale")
-                        .and_then(|v| v.as_i64())
-                        .unwrap_or(1024) as f32;
 
                     let cfg = input.get("cfg")
                         .and_then(|v| v.as_f64())
@@ -573,11 +621,10 @@ fn register_basic_tools(
                                 "class_type": "SVDImageToVideo",
                                 "inputs": {
                                     "model": ["1", "MODEL"],
-                                    "vae": ["1", "VAE"],
                                     "image": ["2", "IMAGE"],
-                                    "motion_bucket_id": motion_bucket_id,
-                                    "motion_scale": motion_scale,
                                     "frames": frames,
+                                    "fps": fps,
+                                    "motion_bucket_id": motion_bucket_id,
                                     "cfg": cfg,
                                     "steps": steps,
                                     "seed": seed
@@ -586,8 +633,8 @@ fn register_basic_tools(
                             "4": {
                                 "class_type": "VideoCombine",
                                 "inputs": {
-                                    "frames": ["3", "FRAMES"],
-                                    "fps": fps,
+                                    "images": ["3", "FRAMES"],
+                                    "frame_rate": fps,
                                     "filename_prefix": "comfyui_video"
                                 }
                             }
@@ -603,7 +650,6 @@ fn register_basic_tools(
                             "frames": frames,
                             "fps": fps,
                             "motion_bucket_id": motion_bucket_id,
-                            "motion_scale": motion_scale,
                             "cfg": cfg,
                             "steps": steps,
                             "seed": seed
@@ -650,8 +696,8 @@ fn register_basic_tools(
 
                     let result = ctx.backend.sample(
                         model,
-                        crate::types::Value::Conditioning(vec![]),
-                        crate::types::Value::Conditioning(vec![]),
+                        crate::types::Value::Conditioning(String::new()),
+                        crate::types::Value::Conditioning(String::new()),
                         crate::types::Value::Latent(vec![]),
                         seed, steps, cfg, sampler, scheduler, denoise
                     ).await;

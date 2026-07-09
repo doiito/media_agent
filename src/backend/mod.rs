@@ -52,7 +52,7 @@ impl Default for T2IParams {
             height: 512,
             steps: 20,
             cfg: 7.0,
-            sampler: "euler".to_string(),
+            sampler: "dpm++2m_karras".to_string(),
             seed: 0,
             model_path: String::new(),
         }
@@ -68,6 +68,9 @@ pub struct I2IParams {
     pub denoise: f32,
     pub steps: usize,
     pub cfg: f32,
+    pub sampler: String,
+    pub width: usize,
+    pub height: usize,
     pub seed: usize,
     pub model_path: String,
 }
@@ -81,6 +84,9 @@ impl Default for I2IParams {
             denoise: 0.75,
             steps: 20,
             cfg: 7.0,
+            sampler: "dpm++2m_karras".to_string(),
+            width: 512,
+            height: 512,
             seed: 0,
             model_path: String::new(),
         }

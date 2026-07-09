@@ -300,17 +300,9 @@ impl Node for ControlNetApplyNode {
 
         debug!("Applying ControlNet with strength {}", strength);
 
-        // 合并 conditioning 与 controlnet 信息
+        // 合并 conditioning 与 controlnet 信息（Conditioning 携带 prompt 文本，直接透传）
         let combined = match conditioning {
-            Value::Conditioning(data) => {
-                let mut new_data = data.clone();
-                // 标记 controlnet 应用（追加元数据）
-                if let Value::ControlNet(cn_path) = control_net {
-                    // 简单地在 conditioning 末尾追加 controlnet 强度信息
-                    new_data.push(strength);
-                }
-                new_data
-            }
+            Value::Conditioning(text) => text.clone(),
             _ => return Err(Error::TypeError("Expected Conditioning".to_string())),
         };
 
@@ -594,12 +586,14 @@ impl Node for ConditioningCombineNode {
         let cond2 = inputs.get("conditioning_2")
             .ok_or_else(|| Error::ExecutionFailed("Missing conditioning_2".to_string()))?;
 
-        let mut combined = Vec::new();
-        if let Value::Conditioning(data) = cond1 {
-            combined.extend_from_slice(data);
+        let mut combined = String::new();
+        if let Value::Conditioning(text) = cond1 {
+            if !combined.is_empty() { combined.push(' '); }
+            combined.push_str(text);
         }
-        if let Value::Conditioning(data) = cond2 {
-            combined.extend_from_slice(data);
+        if let Value::Conditioning(text) = cond2 {
+            if !combined.is_empty() { combined.push(' '); }
+            combined.push_str(text);
         }
 
         Ok(HashMap::from([
@@ -658,12 +652,14 @@ impl Node for ConditioningConcatNode {
         let cond_from = inputs.get("conditioning_from")
             .ok_or_else(|| Error::ExecutionFailed("Missing conditioning_from".to_string()))?;
 
-        let mut result = Vec::new();
-        if let Value::Conditioning(data) = cond_to {
-            result.extend_from_slice(data);
+        let mut result = String::new();
+        if let Value::Conditioning(text) = cond_to {
+            if !result.is_empty() { result.push(' '); }
+            result.push_str(text);
         }
-        if let Value::Conditioning(data) = cond_from {
-            result.extend_from_slice(data);
+        if let Value::Conditioning(text) = cond_from {
+            if !result.is_empty() { result.push(' '); }
+            result.push_str(text);
         }
 
         Ok(HashMap::from([
@@ -1227,7 +1223,7 @@ mod tests {
     async fn test_controlnet_apply() {
         let mut node = ControlNetApplyNode;
         let mut inputs = HashMap::new();
-        inputs.insert("conditioning".to_string(), Value::Conditioning(vec![0.5; 768]));
+        inputs.insert("conditioning".to_string(), Value::Conditioning("a cat".to_string()));
         inputs.insert("control_net".to_string(), Value::ControlNet("canny_model".to_string()));
         inputs.insert("image".to_string(), Value::Image(vec![128u8; 100]));
         inputs.insert("strength".to_string(), Value::Float(1.0));
@@ -1267,12 +1263,12 @@ mod tests {
     async fn test_conditioning_combine() {
         let mut node = ConditioningCombineNode;
         let mut inputs = HashMap::new();
-        inputs.insert("conditioning_1".to_string(), Value::Conditioning(vec![0.5; 10]));
-        inputs.insert("conditioning_2".to_string(), Value::Conditioning(vec![0.3; 10]));
+        inputs.insert("conditioning_1".to_string(), Value::Conditioning("a cat".to_string()));
+        inputs.insert("conditioning_2".to_string(), Value::Conditioning("on a beach".to_string()));
 
         let result = node.execute(inputs).await.unwrap();
-        if let Value::Conditioning(data) = &result["CONDITIONING"] {
-            assert_eq!(data.len(), 20);
+        if let Value::Conditioning(text) = &result["CONDITIONING"] {
+            assert!(text.contains("a cat") && text.contains("on a beach"));
         }
     }
 
