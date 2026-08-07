@@ -1,73 +1,110 @@
 # Backend 配置文件
 # 配置 stable-diffusion.cpp 和 llama.cpp 后端
+# 图片模型按显存档位自动选择(见 src/config/gpu_tier.rs):
+#   Tier16G(>=14GB):  model_path (SDXL f16) + hires
+#   Tier12G(10-14GB): sdxl_gguf_q5_path -> model_path 回退
+#   Tier8G(6-10GB):   sdxl_gguf_q4_path (SDXL Q4_K_S GGUF)
+#   Tier4G(<6GB):     fast_model_path (SD1.5) + image_lora_path (写实 LoRA)
 
 # stable-diffusion.cpp 后端配置
 sd_cpp:
-  # sd-cli 可执行文件路径
-  executable_path: "/usr/local/bin/sd-cli"
-  
-  # 模型文件路径（SD1.5）
-  model_path: "/dev-data/ai-test/media_agent/models/checkpoints/v1-5-pruned-emaonly.safetensors"
-  
+  source_path: "/dev-data/ai-test/stable-diffusion.cpp"
+  executable_path: "/dev-data/ai-test/stable-diffusion.cpp/build-cuda/bin/sd-cli"
+  execution_mode: "native_worker"
+  worker_path: "/dev-data/ai-test/media_agent/target/release/media-sd-worker"
+  bridge_library_path: "/dev-data/ai-test/media_agent/native/runtime/lib/libmedia_sd_bridge.so"
+
+  # 图片模型路径(按档位)
+  # Tier16G/12G 默认使用 SDXL f16;已在本机下载
+  model_path: "/dev-data/ai-test/media_agent/models/checkpoints/sdxl_base_1.0.safetensors"
+  # fast 质量档与 Tier4G 使用的轻量模型
+  fast_model_path: "/dev-data/ai-test/media_agent/models/checkpoints/v1-5-pruned-emaonly.safetensors"
+  # SDXL GGUF(8GB/12GB 档,scripts/download_sdxl_gguf.sh 下载)
+  sdxl_gguf_q4_path: "/dev-data/ai-test/media_agent/models/sdxl/sdxl_base_1.0_Q4_K_S.gguf"
+  sdxl_gguf_q5_path: "/dev-data/ai-test/media_agent/models/sdxl/sd_xl_base_1.0_Q5_K_S.gguf"
+  # SDXL 改进 VAE(空则使用模型内置 VAE)
+  image_vae_path: "/dev-data/ai-test/media_agent/models/vae/sdxl_vae.safetensors"
+  # SD1.5 档写实增强 LoRA(如 models/lora/epic_realism.safetensors);SDXL 档留空
+  image_lora_path: "/dev-data/ai-test/media_agent/models/lora/epic_realism.safetensors"
+  image_lora_scale: 0.7
+  # 图片推理显存预算:-1 自动分段,小显存档位防 OOM
+  image_max_vram: "-1"
+  # 显存档位覆盖(tier4g/tier8g/tier12g/tier16g);缺省自动探测
+  # gpu_tier: "tier16g"
+
+  # Wan2.2 is the prompt-conditioned default for T2V and I2V.
+  video_model_path: "/dev-data/ai-test/media_agent/models/wan2.2-ti2v-5b/Wan2.2-TI2V-5B-Q4_K_M.gguf"
+  video_t5xxl_path: "/dev-data/ai-test/media_agent/models/wan2.2-ti2v-5b/umt5-xxl-encoder-Q5_K_M.gguf"
+  video_vae_path: "/dev-data/ai-test/media_agent/models/wan2.2-ti2v-5b/split_files/vae/wan2.2_vae.safetensors"
+  video_high_noise_model_path: ""
+  # SVD remains an explicitly selectable image-conditioned fallback.
+  svd_model_path: "/dev-data/ai-test/media_agent/models/diffusers/stable-video-diffusion-img2vid-xt/svd_xt.safetensors"
+  clip_vision_path: "/dev-data/ai-test/media_agent/models/diffusers/stable-video-diffusion-img2vid-xt/image_encoder/model.fp16.safetensors"
+  # SVD internal model-space size; Web UI output width/height stay per-request.
+  svd_native_width: 1024
+  svd_native_height: 576
+  semantic_video_native_width: 832
+  semantic_video_native_height: 480
+  video_flow_shift: 3.0
+  video_max_vram: "-1"
+  video_params_backend: "*=cpu"
+  video_stream_layers: false
+
   # 计算后端 (cuda/vulkan/cpu)
   backend: "cuda"
-  
+
   # 精度设置 (f32/f16/q4_0/q5_0/q8_0)
   # GPU 推荐 f16
   precision: "f16"
-  
+
   # Flash Attention
   flash_attention: true
-  
+
   # 是否将部分层卸载到 CPU
   offload_to_cpu: false
-  
+
   # RNG 模式 (cuda/cpu)
-  rng_mode: "cuda"
-  
-  # 超时时间（秒）- 图片生成可能需要较长时间
+  rng_mode: "cpu"
+
+  # 超时时间(秒)- 图片生成可能需要较长时间
   timeout_secs: 300
-  
+
+  # 视频时序图明显更重,避免高质量 SVD 任务被图片超时误杀
+  video_timeout_secs: 1800
+
   # 最大重试次数
   max_retries: 2
-  
+
   # 最大并发任务
   max_concurrent_tasks: 1
-  
+
   # 队列大小
   max_queue_size: 10
-  
-  # 健康检查间隔（秒）
+
+  # 健康检查间隔(秒)
   health_check_interval: 30
-  
-  # 空闲超时（秒）
+
+  # 空闲超时(秒)
   idle_timeout_secs: 60
-  
+
   # 熔断器阈值
   circuit_breaker_threshold: 3
-  
-  # 熔断器恢复时间（秒）
-  circuit_breaker_reset_secs: 60
-  
-  # 输出目录
-  output_dir: "/dev-data/ai-test/media_agent/output"
 
-# llama.cpp 后端配置（可选，用于 VLM）
+  # 熔断器恢复时间(秒)
+  circuit_breaker_reset_secs: 60
+
+# llama.cpp 原生后端和 Agent OpenAI 兼容服务
 llama_cpp:
-  # llama-server 可执行文件路径
-  executable_path: ""
-  
-  # 模型文件路径
-  model_path: ""
-  
-  # 服务端口
-  port: 8081
-  
-  # 上下文长度
-  context_length: 4096
-  
-  # GPU 层数
-  n_gpu_layers: 0
-  
-  # 超时时间（秒）
+  source_path: "/dev-data/ai-test/llama.cpp-b9810"
+  executable_path: "/dev-data/ai-test/llama.cpp-b9810/build/bin/llama-cli"
+  server_path: "/dev-data/ai-test/llama.cpp-b9810/build/bin/llama-server"
+  model_path: "/dev-data/ai-test/Qwythos/Qwythos-9B-Claude-Mythos-5-1M-MTP-Q4_K_M.gguf"
+  backend: "cuda"
+  n_ctx: 32768
+  n_threads: 8
+  n_gpu_layers: -1
+  n_batch: 512
+  flash_attn: true
   timeout_secs: 120
+  max_retries: 2
+  max_concurrent: 1

@@ -5,7 +5,7 @@ huggingface:
   # HF Token（从环境变量读取，避免硬编码）
   # 注册：https://huggingface.co/settings/tokens
   token: "${HF_TOKEN:-}"
-  # HF 镜像（国内可设置 https://hf-mirror.com）
+  # 默认直连 Hugging Face 官方仓库；下载脚本不设置 HF_ENDPOINT。
   endpoint: "${HF_ENDPOINT:-https://huggingface.co}"
 
 # 需要下载的模型列表
