@@ -19,6 +19,17 @@ A production-grade ComfyUI workflow system implemented in Rust, integrated with 
 - **Multi-Backend Support**: stable-diffusion.cpp, llama.cpp, ONNX Runtime, local processor
 - **Real-time Preview**: WebSocket push, sampling progress tracking, intermediate result caching
 
+### Web Interface
+
+A browser-based agent UI served by the server at `http://localhost:8188`. Submit
+natural-language requests for image or video generation, watch the live PDCA
+(Plan → Do → Check → Act) stages, and tune per-request controls such as quality
+tier (Fast / Balanced / High), dimensions, steps, CFG, seed, frames and FPS.
+
+![Web UI - Main generation interface](assets/ui1.jpg)
+
+![Web UI - Request / parameter panel](assets/ui2.jpg)
+
 ### Extended Node System (33+ Nodes)
 
 | Category | Nodes |

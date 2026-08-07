@@ -19,6 +19,17 @@
 - **多后端支持**: stable-diffusion.cpp、llama.cpp、ONNX Runtime、本地处理器
 - **实时预览**: WebSocket 推送、采样进度追踪、中间结果缓存
 
+### Web 界面
+
+由服务器托管的浏览器端 Agent 界面,访问 `http://localhost:8188`。输入自然语言
+请求即可进行图片或视频生成,实时查看 PDCA(Plan → Do → Check → Act)各阶段,
+并可逐请求调参,如质量档(Fast / Balanced / High)、尺寸、steps、CFG、seed、
+帧数与 FPS。
+
+![Web 界面 - 主生成界面](assets/ui1.jpg)
+
+![Web 界面 - 请求/参数面板](assets/ui2.jpg)
+
 ### 扩展节点系统 (33+节点)
 
 | 类别 | 节点 |
