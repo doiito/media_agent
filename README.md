@@ -4,12 +4,17 @@
 
 A production-grade ComfyUI workflow system implemented in Rust, integrated with stable-diffusion.cpp inference engine, supporting PDCA mode and JSON-LD DAG workflows.
 
+> The default runtime is now Gliding Horse + a Rust native worker +
+> stable-diffusion.cpp. Inference requires no Python, PyTorch, or Diffusers.
+> Agent LLM routing supports local llama.cpp and the DeepSeek OpenAI-compatible
+> API. See [the native Agent plan](docs/native-agent-plan.md).
+
 ## Features
 
 ### Core Capabilities
 
 - **Image Generation**: Text-to-Image (T2I), Image-to-Image (I2I), ControlNet guidance
-- **Video Generation**: SVD image-to-video, frame interpolation, AnimateDiff animation
+- **Video Generation**: Wan2.2 prompt-directed text/image-to-video, SVD fallback, delivery scaling
 - **Model Management**: 13 model types, auto-discovery indexing, dual-layer LRU cache
 - **Multi-Backend Support**: stable-diffusion.cpp, llama.cpp, ONNX Runtime, local processor
 - **Real-time Preview**: WebSocket push, sampling progress tracking, intermediate result caching
@@ -29,7 +34,7 @@ A production-grade ComfyUI workflow system implemented in Rust, integrated with 
 - Image-to-image style transfer
 - ControlNet edge/pose/depth control
 - LoRA style/character fine-tuning
-- SVD video generation
+- Wan2.2 text/image-to-video and SVD fallback
 - AnimateDiff animation
 - Multi-stage composite workflows
 
@@ -141,8 +146,9 @@ media_agent/
   - Linux: `sudo apt install protobuf-compiler`
   - macOS: `brew install protobuf`
   - Windows: download from [protobuf releases](https://github.com/protocolbuffers/protobuf/releases)
-- **sd-cli** (stable-diffusion.cpp CLI) — for image/video generation
-- **llama.cpp** (optional) — for LLM text generation
+- **stable-diffusion.cpp**: the C ABI and Rust worker are built from `/dev-data/ai-test/stable-diffusion.cpp`
+- **llama.cpp or DeepSeek API**: the default local source is `/dev-data/ai-test/llama.cpp-b9810`
+- **ffmpeg/ffprobe**: video encoding, delivery scaling, and artifact validation
 
 ### Clone
 
@@ -166,8 +172,11 @@ export CC=clang
 export CXX=clang++
 export CCACHE_DISABLE=1
 
-# Build release
-cargo build --release
+# Build CUDA stable-diffusion.cpp, the C bridge, and Rust worker
+scripts/build_native_runtime.sh
+
+# Build the server and evaluator
+cargo build --release --bin comfyui-server --bin media-agent-eval
 
 # Run tests (215 tests)
 cargo test --lib
@@ -176,32 +185,70 @@ cargo test --lib
 ### Initialize & Run
 
 ```bash
-# Initialize system (download models, create directories)
-cargo run --release --bin init
-
-# Start server
-cargo run --release --bin comfyui-server
-
-# Or with config
-cargo run --release --bin comfyui-server -- --config config/agent.yaml
+# Start GPU llama-server and the media server
+scripts/start_all.sh
 ```
+
+Local llama.cpp uses `--n-gpu-layers auto --fit on`. It sleeps after one idle
+second to release VRAM for stable-diffusion.cpp, then wakes for the next Agent phase.
 
 ### Video Generation Notes
 
-SVD (Stable Video Diffusion) supports **image-to-video** only. For **text-to-video**, the system automatically uses a combination path:
+The default prompt-conditioned video engine is Wan2.2 TI2V 5B. Install its
+Q4_K_M diffusion model, Q5_K_M UMT5 encoder, and VAE with:
 
-```
-text_to_video = text_to_image → image_to_video
+```bash
+scripts/download_wan22_ti2v.sh
 ```
 
-1. First generates a first-frame image via text_to_image
-2. Then animates it via image_to_video (SVD)
+The script uses official `huggingface.co` URLs with parallel `curl` Range
+downloads and SHA-256 verification; it does not require Python. Wan handles both
+text-to-video and prompt-directed image-to-video, so actions such as dancing
+remain part of the model conditioning rather than being discarded.
+
+Wan generation uses an aspect-matched native canvas with approximately the
+same area as 832x480, then the Rust worker scales and pads to each request's
+delivery dimensions. GGUF tensor types are preserved and `max_vram=-1` enables
+stable-diffusion.cpp graph segmentation on 16 GB GPUs.
+
+SVD remains available as a faster image-conditioned fallback. Download it with
+`scripts/download_svd_official.sh`; it cannot guarantee exact text-directed
+actions. Text-to-video with an explicitly selected SVD model uses the native
+composition path:
+
+```text
+text_to_video = native text_to_image -> native SVD image_to_video
+```
 
 Recommended video parameters (SVD):
-- **cfg**: 2.5 (not user-specified 7)
+- **per-frame CFG**: defaults to a linear `min_cfg=1.0` to final-frame `cfg=3.0` ramp; both endpoints remain request-selectable
+- **conditioning variation**: `noise_aug_strength=0.02`, passed dynamically to both the conditioning image and added time IDs
 - **fps**: 5
 - **frames**: 25 (5 seconds video)
-- **motion_bucket_id**: 127
+- **generation size**: 1024×576; each Web request controls the scaled/padded delivery size
+- **motion_bucket_id**: dynamic per request (native range 0-1023, Web slider 0-255, default 127)
+- **memory**: Wan video parameters use the upstream-recommended `*=cpu` residency policy while compute remains on CUDA; videos longer than two frames also use overlapping native VAE tiles so 25-frame generation fits a 16 GB GPU
+- **timeouts**: image inference defaults to 300 seconds; video has an independent 1800-second limit
+
+The Web UI provides Fast, Balanced, and High quality profiles while allowing
+users to override the prompt, model, dimensions, steps, CFG, seed, frames, FPS,
+and motion controls per request. The UI never hard-codes generated content. CA
+rejects near-blank images and effectively static videos while reporting signal
+range, decoded frame count, duration, and temporal-change metrics.
+
+At the Rust tool boundary, each natural-language request is dynamically compiled
+through the configured llama.cpp or DeepSeek provider into a validated English
+model prompt. Invalid drafts never reach the native worker. Successful
+`/agent/chat` responses expose the actual pipeline, prompt, negative prompt,
+quality, seed, effective parameters, and output path in `generation_audit`; this adds no Python dependency and does not
+hard-code generation content.
+
+Image-to-image requests preserve the source aspect ratio unless the user
+explicitly overrides both dimensions. Identity/composition preservation uses a
+conservative default transform strength, while the Web UI slider remains an
+explicit per-request override. High-quality text-to-video first creates a
+native semantic keyframe and then runs Wan I2V; Fast and Balanced retain direct
+Wan T2V for lower latency.
 
 ## Test Coverage
 
@@ -278,10 +325,10 @@ cache:
 
 ## Roadmap
 
-- [ ] WebUI frontend interface
-- [ ] More video generation model support
+- [x] Dynamic Web UI for image and video generation
+- [x] Native Wan2.2 and SVD video inference
 - [ ] Distributed inference
-- [ ] Automatic model download
+- [x] Native CLI model download scripts
 
 ## License
 
