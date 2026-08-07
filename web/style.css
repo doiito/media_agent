@@ -343,12 +343,23 @@ header h1 { font-size: 14px; font-weight: 600; line-height: 1.3; }
   background: var(--accent-1); cursor: pointer; border: 2px solid var(--surface);
   box-shadow: 0 0 4px rgba(0,0,0,.3);
 }
-.param-group select {
+.param-group select,
+.param-group input[type="text"],
+.param-group input[type="number"],
+.param-group textarea {
   width: 100%; padding: 6px 8px; border-radius: var(--radius-xs);
   background: var(--surface-alt); border: 1px solid var(--border);
-  color: var(--text); font-size: 12px; outline: none; cursor: pointer;
+  color: var(--text); font-size: 12px; outline: none;
+  font-family: inherit;
 }
-.param-group select:focus { border-color: var(--accent-1); }
+.param-group select { cursor: pointer; }
+.param-group textarea {
+  resize: vertical;
+  min-height: 58px;
+}
+.param-group select:focus,
+.param-group input:focus,
+.param-group textarea:focus { border-color: var(--accent-1); }
 
 .skill-tag, .tool-tag {
   display: inline-block; padding: 3px 8px; border-radius: 4px;

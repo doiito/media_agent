@@ -25,7 +25,24 @@ const state = {
   wsReconnectTimer: null,
   currentTaskMsg: null,
   previewCount: 0,
-  params: { steps: 20, cfg: 7.0, width: 512, height: 512, seed: -1 },
+  params: {
+    intent: 'auto',
+    model: '',
+    negative_prompt: '',
+    quality: 'balanced',
+    steps: 24,
+    cfg: 7.0,
+    min_cfg: 1.0,
+    noise_aug_strength: 0.02,
+    strength: 0.35,
+    width: 512,
+    height: 512,
+    frames: 25,
+    fps: 5,
+    motion_bucket_id: 127,
+    seed: -1
+  },
+  explicitParamKeys: new Set(),
   uploadedFile: null,
   uploadedFilePath: null,
   galleryItems: [],
@@ -88,12 +105,20 @@ async function checkAgentStatus() {
     if (data.ready) {
       updateStatus('online', 'Agent ready');
       loadAgentInfo(data);
-    } else if (!state.initAttempted) {
-      updateStatus('offline', 'Not initialized');
+    } else {
+      updateStatus('offline', agentUnavailableReason(data));
     }
   } catch (e) {
     updateStatus('error', 'Server unreachable');
   }
+}
+
+function agentUnavailableReason(data) {
+  if (!data) return 'Agent unavailable';
+  if (!data.supervisor_ready) return 'Agent not initialized';
+  if (!data.llm_reachable) return `${data.llm_provider || 'LLM'} unavailable`;
+  if (!data.native_runtime_ready) return 'Native runtime incomplete';
+  return 'Agent unavailable';
 }
 
 async function initAgent() {
@@ -127,6 +152,12 @@ async function initAgent() {
 /* ─── Agent Info Panel ─── */
 function loadAgentInfo(data) {
   if (!data) return;
+  const summary = $('agentSummary');
+  if (summary) {
+    const imageState = data.native_image_ready ? 'image ready' : 'image unavailable';
+    const videoState = data.native_video_ready ? 'video ready' : 'video model unavailable';
+    summary.textContent = `${data.llm_provider || 'LLM'} · ${imageState} · ${videoState}`;
+  }
 
   // Skills
   const skillsEl = $('skills-list');
@@ -433,8 +464,9 @@ async function ensureAgentReady() {
       const data = await r.json();
       if (data.ready) {
         state.agentReady = true;
+        state.agentInfo = data;
         updateStatus('online', 'Agent ready');
-        if (state.agentInfo) loadAgentInfo(data);
+        loadAgentInfo(data);
         return true;
       }
     }
@@ -452,17 +484,25 @@ async function ensureAgentReady() {
     }
     const data = await r.json();
     if (data.status === 'initialized' || data.ready) {
-      state.agentReady = true;
-      updateStatus('online', 'Agent ready');
-      addSystemMsg('Agent auto-initialized.');
       try {
         const sr = await fetch('/agent/status');
         if (sr.ok) {
           state.agentInfo = await sr.json();
           loadAgentInfo(state.agentInfo);
+          state.agentReady = !!state.agentInfo.ready;
+          if (state.agentReady) {
+            updateStatus('online', 'Agent ready');
+            addSystemMsg('Agent auto-initialized.');
+            return true;
+          }
+          const reason = agentUnavailableReason(state.agentInfo);
+          updateStatus('error', reason);
+          showToast('error', reason);
+          return false;
         }
       } catch (_) {}
-      return true;
+      updateStatus('error', 'Status check failed');
+      return false;
     }
     updateStatus('error', 'Init failed');
     return false;
@@ -474,6 +514,21 @@ async function ensureAgentReady() {
 }
 
 async function sendToAgent(text) {
+  if (!(await ensureAgentReady())) return;
+  const explicitVideo = ['text_to_video', 'image_to_video'].includes(state.params.intent);
+  if (explicitVideo && state.agentInfo?.native_video_ready === false && !state.params.model) {
+    try {
+      const statusResponse = await fetch('/agent/status');
+      if (statusResponse.ok) {
+        state.agentInfo = await statusResponse.json();
+        loadAgentInfo(state.agentInfo);
+      }
+    } catch (_) { /* keep the last known readiness state */ }
+  }
+  if (explicitVideo && state.agentInfo?.native_video_ready === false && !state.params.model) {
+    showToast('error', 'The configured native video model or one of its encoder/VAE assets is unavailable.');
+    return;
+  }
   state.processing = true;
   sendBtn.disabled = true;
 
@@ -482,21 +537,15 @@ async function sendToAgent(text) {
   addMsg('user', text);
   addMsg('agent', ''); // typing indicator
 
-  const ready = await ensureAgentReady();
-  if (!ready) {
-    removeTyping();
-    addSystemMsg('Agent is not ready. Click Init in settings or check server configuration.');
-    state.processing = false;
-    sendBtn.disabled = !input.value.trim();
-    clearUpload();
-    return;
-  }
-
   // Build payload
+  const requestParams = {
+    ...state.params,
+    _explicit_keys: [...state.explicitParamKeys]
+  };
   const payload = {
     message: text,
     client_id: state.clientId,
-    params: state.params
+    params: requestParams
   };
 
   // Attach uploaded image if present
@@ -581,7 +630,7 @@ function showAgentResult(data) {
         ).join('');
       }
     } else if (typeof output === 'object') {
-      const images = findImagePaths(output);
+      const images = [...new Set(findImagePaths(output))];
       if (images.length > 0) {
         if (images.length === 1) {
           outputHtml = renderMedia(images[0]);
@@ -610,12 +659,23 @@ function showAgentResult(data) {
   addMsg('agent', summaryHtml + outputHtml);
 }
 
+function outputMediaUrl(path) {
+  const normalized = String(path).replace(/\\/g, '/');
+  const outputMarker = '/output/';
+  const markerIndex = normalized.lastIndexOf(outputMarker);
+  const relative = markerIndex >= 0
+    ? normalized.slice(markerIndex + outputMarker.length)
+    : normalized.replace(/^\.?\/?output\//, '').replace(/^\/+/, '');
+  const segments = relative.split('/').filter(Boolean);
+  const filename = segments.pop() || relative;
+  const params = new URLSearchParams({ filename });
+  if (segments.length) params.set('subfolder', segments.join('/'));
+  return { filename, url: '/view?' + params.toString() };
+}
+
 function renderMedia(path) {
   const isVideo = !!path.match(/\.(mp4|webm)$/i);
-  const filename = path.split('/').pop() || path;
-  const subfolder = path.split('/').slice(0, -1).join('/');
-  const url = '/view?filename=' + encodeURIComponent(filename)
-    + (subfolder ? '&subfolder=' + encodeURIComponent(subfolder) : '');
+  const { filename, url } = outputMediaUrl(path);
   const dlUrl = url + '&download=1';
 
   if (isVideo) {
@@ -826,21 +886,18 @@ async function loadGallery() {
       }
     }
 
-    // Reverse so newest first
-    allOutputs.reverse();
-    state.galleryItems = allOutputs;
+    // Reverse so newest first and render each artifact once.
+    const uniqueOutputs = [...new Set(allOutputs.reverse())];
+    state.galleryItems = uniqueOutputs;
 
-    if (!allOutputs.length) {
+    if (!uniqueOutputs.length) {
       galleryGrid.innerHTML = '<div class="gallery-empty">No generated images yet</div>';
       return;
     }
 
-    galleryGrid.innerHTML = allOutputs.map(path => {
+    galleryGrid.innerHTML = uniqueOutputs.map(path => {
       const isVideo = !!path.match(/\.(mp4|webm)$/i);
-      const filename = path.split('/').pop() || path;
-      const subfolder = path.split('/').slice(0, -1).join('/');
-      const url = '/view?filename=' + encodeURIComponent(filename)
-        + (subfolder ? '&subfolder=' + encodeURIComponent(subfolder) : '');
+      const { url } = outputMediaUrl(path);
 
       return `<div class="gallery-item" onclick="${isVideo ? '' : "openModal('" + url + "')"}">
         ${isVideo
@@ -954,10 +1011,65 @@ function escapeHtml(str) {
 
 /* ─── Parameter Controls (wired from settings panel) ─── */
 function updateParam(key, value) {
-  state.params[key] = key === 'cfg' || key === 'steps' ? parseFloat(value) : parseInt(value, 10);
+  if (key === 'intent' || key === 'model' || key === 'quality' || key === 'negative_prompt') {
+    state.params[key] = value.trim();
+  } else if (key === 'cfg' || key === 'min_cfg' || key === 'noise_aug_strength' || key === 'strength') {
+    state.params[key] = parseFloat(value);
+  } else {
+    state.params[key] = parseInt(value, 10);
+  }
+  state.explicitParamKeys.add(key);
+
+  if (key === 'intent') {
+    const isVideo = ['text_to_video', 'image_to_video'].includes(state.params.intent);
+    if (!state.explicitParamKeys.has('cfg')) {
+      state.params.cfg = isVideo ? 6.0 : 7.0;
+      const cfgInput = document.getElementById('cfg-input');
+      if (cfgInput) cfgInput.value = String(state.params.cfg);
+      const cfgDisplay = document.getElementById('param-cfg');
+      if (cfgDisplay) cfgDisplay.textContent = String(state.params.cfg);
+    }
+    if (!state.explicitParamKeys.has('steps')) {
+      state.params.steps = isVideo ? 25 : 24;
+      const stepsInput = document.getElementById('steps-input');
+      if (stepsInput) stepsInput.value = String(state.params.steps);
+      const stepsDisplay = document.getElementById('param-steps');
+      if (stepsDisplay) stepsDisplay.textContent = String(state.params.steps);
+    }
+    if (!state.explicitParamKeys.has('width')) {
+      state.params.width = isVideo ? 1024 : 512;
+      const widthInput = document.getElementById('width-input');
+      if (widthInput) widthInput.value = String(state.params.width);
+      const widthDisplay = document.getElementById('param-width');
+      if (widthDisplay) widthDisplay.textContent = String(state.params.width);
+    }
+    if (!state.explicitParamKeys.has('height')) {
+      state.params.height = isVideo ? 576 : 512;
+      const heightInput = document.getElementById('height-input');
+      if (heightInput) heightInput.value = String(state.params.height);
+      const heightDisplay = document.getElementById('param-height');
+      if (heightDisplay) heightDisplay.textContent = String(state.params.height);
+    }
+  }
   // Update display
   const display = document.getElementById('param-' + key);
   if (display) display.textContent = value;
+}
+
+function applyQualityPreset(quality) {
+  const isVideo = ['text_to_video', 'image_to_video'].includes(state.params.intent);
+  const stepsByQuality = isVideo
+    ? { fast: 18, balanced: 25, high: 30 }
+    : { fast: 14, balanced: 24, high: 36 };
+  const steps = stepsByQuality[quality] || stepsByQuality.balanced;
+  state.params.quality = quality;
+  state.params.steps = steps;
+  state.explicitParamKeys.add('quality');
+  state.explicitParamKeys.add('steps');
+  const input = document.getElementById('steps-input');
+  if (input) input.value = String(steps);
+  const display = document.getElementById('param-steps');
+  if (display) display.textContent = String(steps);
 }
 
 /* ─── Start ─── */

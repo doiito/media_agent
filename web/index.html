@@ -64,28 +64,74 @@
         <section class="panel-section">
           <h4>Generation Parameters</h4>
           <div class="param-group">
-            <label>Steps <span class="val" id="param-steps">20</span></label>
-            <input type="range" min="1" max="50" value="20" oninput="updateParam('steps',this.value)">
-          </div>
-          <div class="param-group">
-            <label>CFG Scale <span class="val" id="param-cfg">7.0</span></label>
-            <input type="range" min="1" max="30" value="7" step="0.5" oninput="updateParam('cfg',this.value)">
-          </div>
-          <div class="param-group">
-            <label>Width</label>
-            <select onchange="updateParam('width',this.value)">
-              <option value="512">512</option>
-              <option value="768">768</option>
-              <option value="1024">1024</option>
+            <label>Task Type</label>
+            <select onchange="updateParam('intent',this.value)">
+              <option value="auto">Auto</option>
+              <option value="text_to_image">Text to image</option>
+              <option value="image_to_image">Image to image</option>
+              <option value="text_to_video">Text to video</option>
+              <option value="image_to_video">Image to video</option>
             </select>
           </div>
           <div class="param-group">
-            <label>Height</label>
-            <select onchange="updateParam('height',this.value)">
-              <option value="512">512</option>
-              <option value="768">768</option>
-              <option value="1024">1024</option>
+            <label>Model Path <span class="val">optional</span></label>
+            <input type="text" placeholder="Use configured default" onchange="updateParam('model',this.value)">
+          </div>
+          <div class="param-group">
+            <label>Negative Prompt <span class="val">optional</span></label>
+            <textarea rows="3" placeholder="Artifacts or content to avoid" onchange="updateParam('negative_prompt',this.value)"></textarea>
+          </div>
+          <div class="param-group">
+            <label>Quality</label>
+            <select onchange="applyQualityPreset(this.value)">
+              <option value="fast">Fast</option>
+              <option value="balanced" selected>Balanced</option>
+              <option value="high">High</option>
             </select>
+          </div>
+          <div class="param-group">
+            <label>Steps <span class="val" id="param-steps">24</span></label>
+            <input id="steps-input" type="range" min="1" max="50" value="24" oninput="updateParam('steps',this.value)">
+          </div>
+          <div class="param-group">
+            <label>CFG Scale / Video End <span class="val" id="param-cfg">7.0</span></label>
+            <input id="cfg-input" type="range" min="1" max="30" value="7" step="0.5" oninput="updateParam('cfg',this.value)">
+          </div>
+          <div class="param-group">
+            <label>SVD CFG Start <span class="val" id="param-min_cfg">1.0</span></label>
+            <input id="min-cfg-input" type="range" min="0.5" max="10" value="1" step="0.5" oninput="updateParam('min_cfg',this.value)">
+          </div>
+          <div class="param-group">
+            <label>SVD Motion Variation <span class="val" id="param-noise_aug_strength">0.02</span></label>
+            <input type="range" min="0" max="0.2" value="0.02" step="0.01" oninput="updateParam('noise_aug_strength',this.value)">
+          </div>
+          <div class="param-group">
+            <label>I2I Transform Strength <span class="val" id="param-strength">0.35</span></label>
+            <input type="range" min="0" max="1" value="0.35" step="0.05" oninput="updateParam('strength',this.value)">
+          </div>
+          <div class="param-group">
+            <label>Width <span class="val" id="param-width">512</span></label>
+            <input id="width-input" type="number" min="256" max="4096" step="2" value="512" onchange="updateParam('width',this.value)">
+          </div>
+          <div class="param-group">
+            <label>Height <span class="val" id="param-height">512</span></label>
+            <input id="height-input" type="number" min="256" max="4096" step="2" value="512" onchange="updateParam('height',this.value)">
+          </div>
+          <div class="param-group">
+            <label>Video Frames <span class="val" id="param-frames">25</span></label>
+            <input type="range" min="1" max="81" value="25" oninput="updateParam('frames',this.value)">
+          </div>
+          <div class="param-group">
+            <label>Video FPS <span class="val" id="param-fps">5</span></label>
+            <input type="range" min="1" max="30" value="5" oninput="updateParam('fps',this.value)">
+          </div>
+          <div class="param-group">
+            <label>SVD Motion Intensity <span class="val" id="param-motion_bucket_id">127</span></label>
+            <input type="range" min="0" max="255" value="127" oninput="updateParam('motion_bucket_id',this.value)">
+          </div>
+          <div class="param-group">
+            <label>Seed</label>
+            <input type="number" value="-1" min="-1" step="1" onchange="updateParam('seed',this.value)">
           </div>
         </section>
 
