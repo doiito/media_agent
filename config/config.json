@@ -29,7 +29,7 @@
     "video_params_backend": "*=cpu",
     "video_max_vram": "-1",
     "video_stream_layers": false,
-    "video_flow_shift": 3.0,
+    "video_flow_shift": 5.0,
     "rng_mode": "cpu",
     "timeout_secs": 300,
     "video_timeout_secs": 1800,
