@@ -1,0 +1,50 @@
+diff --git a/src/model/diffusion/unet.hpp b/src/model/diffusion/unet.hpp
+index 948d476..227c12f 100644
+--- a/src/model/diffusion/unet.hpp
++++ b/src/model/diffusion/unet.hpp
+@@ -279,9 +279,39 @@ public:
+             const bool skip_temporal_feed_forward =
+                 std::getenv("MEDIA_SD_SVD_DISABLE_TEMPORAL_FEED_FORWARD") != nullptr;
+-            x_mix = mix_block->forward(ctx, x_mix, time_context,
+-                                       skip_temporal_cross_attention,
+-                                       skip_temporal_self_attention,
+-                                       skip_temporal_feed_forward);
++            int64_t temporal_batch_chunk = 0;
++            if (const char* value = std::getenv("MEDIA_SD_SVD_TEMPORAL_BATCH_CHUNK")) {
++                temporal_batch_chunk = std::max<int64_t>(0, std::atoll(value));
++            }
++            if (temporal_batch_chunk > 0 && x_mix->ne[2] > temporal_batch_chunk) {
++                std::vector<ggml_tensor*> chunks;
++                for (int64_t start = 0; start < x_mix->ne[2]; start += temporal_batch_chunk) {
++                    const int64_t count = std::min<int64_t>(temporal_batch_chunk, x_mix->ne[2] - start);
++                    auto x_chunk = ggml_view_3d(ctx->ggml_ctx,
++                                                x_mix,
++                                                x_mix->ne[0],
++                                                x_mix->ne[1],
++                                                count,
++                                                x_mix->nb[1],
++                                                x_mix->nb[2],
++                                                start * x_mix->nb[2]);
++                    auto context_chunk = ggml_view_3d(ctx->ggml_ctx,
++                                                      time_context,
++                                                      time_context->ne[0],
++                                                      time_context->ne[1],
++                                                      count,
++                                                      time_context->nb[1],
++                                                      time_context->nb[2],
++                                                      start * time_context->nb[2]);
++                    chunks.push_back(mix_block->forward(ctx, x_chunk, context_chunk,
++                                                        skip_temporal_cross_attention,
++                                                        skip_temporal_self_attention,
++                                                        skip_temporal_feed_forward));
++                }
++                x_mix = ggml_ext_vec_concat(ctx->ggml_ctx, chunks, 2);
++            } else {
++                x_mix = mix_block->forward(ctx, x_mix, time_context,
++                                           skip_temporal_cross_attention,
++                                           skip_temporal_self_attention,
++                                           skip_temporal_feed_forward);
++            }
+             // [B * h * w, T, inner_dim]
+ 
+             x_mix = ggml_reshape_4d(ctx->ggml_ctx, x_mix, C, T, S, B);                         // (b s) t c -> b s t c

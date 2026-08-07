@@ -1,0 +1,66 @@
+diff --git a/include/stable-diffusion.h b/include/stable-diffusion.h
+index fc2ae73..c7058b4 100644
+--- a/include/stable-diffusion.h
++++ b/include/stable-diffusion.h
+@@ -470,6 +470,7 @@ SD_API bool vae_roundtrip(sd_ctx_t* sd_ctx,
+                           sd_image_t input_image,
+                           int width,
+                           int height,
++                          int frames,
+                           sd_image_t** images_out,
+                           int* num_images_out);
+ 
+diff --git a/src/stable-diffusion.cpp b/src/stable-diffusion.cpp
+index d9d3e12..00dfa4e 100644
+--- a/src/stable-diffusion.cpp
++++ b/src/stable-diffusion.cpp
+@@ -4834,6 +4834,7 @@ SD_API bool vae_roundtrip(sd_ctx_t* sd_ctx,
+                           sd_image_t input_image,
+                           int width,
+                           int height,
++                          int frames,
+                           sd_image_t** images_out,
+                           int* num_images_out) {
+@@ -4862,25 +4863,33 @@ SD_API bool vae_roundtrip(sd_ctx_t* sd_ctx,
+              (int)latent.shape()[2],
+              (int)latent.shape()[3]);
+ 
+-    sd::Tensor<float> decoded = sd_ctx->sd->decode_first_stage(latent, sd_ctx->sd->version == VERSION_SVD);
++    const int output_frames = std::max(1, frames);
++    sd::Tensor<float> decode_latent = latent;
++    for (int frame = 1; frame < output_frames; ++frame) {
++        decode_latent = sd::ops::concat(decode_latent, latent, 3);
++    }
++    sd::Tensor<float> decoded = sd_ctx->sd->decode_first_stage(decode_latent, sd_ctx->sd->version == VERSION_SVD);
+     if (decoded.empty()) {
+         LOG_ERROR("VAE roundtrip decode failed");
+         return false;
+     }
+-    sd_image_t* result = (sd_image_t*)calloc(1, sizeof(sd_image_t));
++    sd_image_t* result = (sd_image_t*)calloc(output_frames, sizeof(sd_image_t));
+     if (result == nullptr) {
+         return false;
+     }
+-    result[0] = tensor_to_sd_image(decoded);
+-    if (result[0].data == nullptr) {
+-        free(result);
+-        return false;
++    for (int frame = 0; frame < output_frames; ++frame) {
++        result[frame] = tensor_to_sd_image(decoded, frame);
++        if (result[frame].data == nullptr) {
++            free_sd_images(result, output_frames);
++            return false;
++        }
+     }
+     if (images_out != nullptr) {
+         *images_out = result;
+     } else {
+-        free_sd_images(result, 1);
++        free_sd_images(result, output_frames);
+     }
+     if (num_images_out != nullptr) {
+-        *num_images_out = 1;
++        *num_images_out = output_frames;
+     }
+     return true;
+ }

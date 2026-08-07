@@ -1,0 +1,32 @@
+{
+  "cases": [
+    {
+      "id": "i2i-cinematic-portrait-identity",
+      "message": "将这张照片转换成电影感的暖色电影海报风格，保留人物身份和构图，增强柔和轮廓光与服装细节",
+      "image_path": "input/bk_0022.jpg",
+      "params": {
+        "intent": "image_to_image",
+        "negative_prompt": "identity change, different person, distorted face, extra limbs, blurry, text, watermark",
+        "width": 512,
+        "height": 512,
+        "steps": 24,
+        "cfg": 7.0,
+        "seed": 43,
+        "strength": 0.35,
+        "quality": "balanced",
+        "_explicit_keys": [
+          "intent",
+          "negative_prompt",
+          "steps",
+          "cfg",
+          "seed",
+          "quality"
+        ]
+      },
+      "required_prompt_terms": ["cinematic", "warm", "identity", "composition"],
+      "expected_width": 512,
+      "expected_height": 640,
+      "expected_success": true
+    }
+  ]
+}

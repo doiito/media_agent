@@ -146,12 +146,29 @@ impl PromptExecutor {
                 InputValue::Link([from_node_id, output_slot]) => {
                     // 从输出中获取值
                     if let Some(node_outputs) = outputs.get(from_node_id) {
-                        let slot_idx: usize = output_slot.parse()?;
-                        let output_keys: Vec<String> = node_outputs.keys().cloned().collect();
-                        if let Some(output_key) = output_keys.get(slot_idx) {
-                            if let Some(output_value) = node_outputs.get(output_key) {
-                                inputs.insert(key.clone(), output_value.clone());
+                        // 支持两种格式：
+                        // 1. 字符串格式：["node_id", "OUTPUT_NAME"] (ComfyUI标准格式)
+                        // 2. 数字格式：["node_id", "slot_index"]
+                        let output_value = if let Ok(slot_idx) = output_slot.parse::<usize>() {
+                            // 数字格式：通过索引获取
+                            let output_keys: Vec<String> = node_outputs.keys().cloned().collect();
+                            if let Some(output_key) = output_keys.get(slot_idx) {
+                                node_outputs.get(output_key).cloned()
+                            } else {
+                                None
                             }
+                        } else {
+                            // 字符串格式：通过名称直接获取
+                            node_outputs.get(output_slot).cloned()
+                        };
+
+                        if let Some(v) = output_value {
+                            inputs.insert(key.clone(), v);
+                        } else {
+                            return Err(Error::InvalidConnection(format!(
+                                "Node '{}' output '{}' not found for input '{}'",
+                                from_node_id, output_slot, key
+                            )));
                         }
                     } else {
                         return Err(Error::InvalidConnection(format!(

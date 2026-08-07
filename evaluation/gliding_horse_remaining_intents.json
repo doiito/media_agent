@@ -1,0 +1,63 @@
+{
+  "cases": [
+    {
+      "id": "i2i-cinematic-portrait",
+      "message": "将这张照片转换成电影感的暖色电影海报风格，保留人物身份和构图，增强柔和轮廓光与服装细节",
+      "image_path": "input/bk_0022.jpg",
+      "params": {
+        "intent": "image_to_image",
+        "negative_prompt": "identity change, different person, distorted face, extra limbs, blurry, text, watermark",
+        "width": 512,
+        "height": 512,
+        "steps": 24,
+        "cfg": 7.0,
+        "seed": 43,
+        "strength": 0.65,
+        "quality": "balanced",
+        "_explicit_keys": [
+          "intent",
+          "negative_prompt",
+          "width",
+          "height",
+          "steps",
+          "cfg",
+          "seed",
+          "strength",
+          "quality"
+        ]
+      },
+      "required_prompt_terms": ["cinematic", "warm", "identity"],
+      "expected_success": true
+    },
+    {
+      "id": "t2v-five-seconds",
+      "message": "生成5秒短视频：一只金色机械蝴蝶在雨夜霓虹城市街道上飞行，镜头平稳跟随",
+      "params": {
+        "intent": "text_to_video",
+        "negative_prompt": "static, frozen, daylight, dry street, blurry, flicker, camera shake, distorted wings",
+        "width": 1024,
+        "height": 576,
+        "frames": 25,
+        "fps": 5,
+        "steps": 25,
+        "cfg": 6.0,
+        "seed": 44,
+        "quality": "balanced",
+        "_explicit_keys": [
+          "intent",
+          "negative_prompt",
+          "width",
+          "height",
+          "frames",
+          "fps",
+          "steps",
+          "cfg",
+          "seed",
+          "quality"
+        ]
+      },
+      "required_prompt_terms": ["mechanical", "butterfly", "neon", "fly"],
+      "expected_success": true
+    }
+  ]
+}

@@ -1,0 +1,92 @@
+diff --git a/include/stable-diffusion.h b/include/stable-diffusion.h
+--- a/include/stable-diffusion.h
++++ b/include/stable-diffusion.h
+@@ -379,6 +379,7 @@ typedef struct {
+     int video_frames;
+     int fps;
+     int motion_bucket_id;
++    float min_guidance_scale;
+     float vace_strength;
+     sd_tiling_params_t vae_tiling_params;
+     sd_cache_params_t cache;
+diff --git a/src/stable-diffusion.cpp b/src/stable-diffusion.cpp
+--- a/src/stable-diffusion.cpp
++++ b/src/stable-diffusion.cpp
+@@ -2000,7 +2000,8 @@ public:
+                              int audio_length,
+                              float frame_rate,
+                              const sd_cache_params_t* cache_params,
+-                             const sd::Tensor<float>& video_positions = {}) {
++                             const sd::Tensor<float>& video_positions = {},
++                             float frame_guidance_min = INFINITY) {
+         struct RunnerDoneOnExit {
+             GGMLRunner* runner = nullptr;
+             ~RunnerDoneOnExit() {
+@@ -2287,7 +2288,29 @@ public:
+             guidance_input.pred_uncond     = uncond_out.empty() ? nullptr : &uncond_out;
+             guidance_input.pred_img_uncond = img_uncond_out.empty() ? nullptr : &img_uncond_out;
+ 
+-            sd::guidance::GuiderOutput guided = guidance_schedule.empty() ? primary_guidance.forward(guidance_input, {}) : primary_guidance.forward(guidance_input, {}, guidance_schedule[guidance_schedule.size() - 1 - step]);
++            const float step_cfg = guidance_schedule.empty()
++                                       ? cfg_scale
++                                       : guidance_schedule[guidance_schedule.size() - 1 - step];
++            sd::guidance::GuiderOutput guided;
++            if (version == VERSION_SVD && std::isfinite(frame_guidance_min) &&
++                !uncond_out.empty() && cond_out.dim() == 4 && cond_out.shape()[3] > 0) {
++                // StableVideoDiffusionPipeline applies a linear guidance ramp
++                // over frames, not sampling steps. Keep the first frame close
++                // to the source while allowing progressively stronger motion.
++                const int64_t frame_count = cond_out.shape()[3];
++                for (int64_t frame = 0; frame < frame_count; ++frame) {
++                    const float ratio = frame_count > 1
++                                            ? static_cast<float>(frame) / static_cast<float>(frame_count - 1)
++                                            : 0.f;
++                    const float frame_cfg = frame_guidance_min +
++                                            (step_cfg - frame_guidance_min) * ratio;
++                    auto cond_frame   = sd::ops::slice(cond_out, 3, frame, frame + 1);
++                    auto uncond_frame = sd::ops::slice(uncond_out, 3, frame, frame + 1);
++                    auto frame_pred   = uncond_frame + (cond_frame - uncond_frame) * frame_cfg;
++                    guided.pred       = guided.pred.empty()
++                                            ? std::move(frame_pred)
++                                            : sd::ops::concat(guided.pred, frame_pred, 3);
++                }
++            } else {
++                guided = primary_guidance.forward(guidance_input, {}, step_cfg);
++            }
+             if (guided.pred.empty()) {
+                 return {};
+             }
+@@ -3095,6 +3118,7 @@ void sd_vid_gen_params_init(sd_vid_gen_params_t* sd_vid_gen_params) {
+     sd_vid_gen_params->video_frames                          = 6;
+     sd_vid_gen_params->fps                                   = 16;
+     sd_vid_gen_params->motion_bucket_id                      = 127;
++    sd_vid_gen_params->min_guidance_scale                    = 1.f;
+     sd_vid_gen_params->moe_boundary                          = 0.875f;
+     sd_vid_gen_params->vace_strength                         = 1.f;
+     sd_vid_gen_params->vae_tiling_params                     = {false, false, 0, 0, 0.5f, 0.0f, 0.0f, nullptr};
+@@ -3338,6 +3362,7 @@ struct GenerationRequest {
+     int requested_frames                     = -1;
+     int fps                                  = 16;
+     int motion_bucket_id                     = 127;
++    float min_guidance_scale                 = 1.f;
+     float vace_strength                      = 1.f;
+ 
+     GenerationRequest(sd_ctx_t* sd_ctx, const sd_img_gen_params_t* sd_img_gen_params) {
+@@ -3375,6 +3400,7 @@ struct GenerationRequest {
+         clip_skip                   = sd_vid_gen_params->clip_skip;
+         fps                         = std::max(1, sd_vid_gen_params->fps);
+         motion_bucket_id            = std::clamp(sd_vid_gen_params->motion_bucket_id, 0, 1023);
++        min_guidance_scale          = std::clamp(sd_vid_gen_params->min_guidance_scale, 0.f, 30.f);
+         vae_scale_factor            = sd_ctx->sd->get_vae_scale_factor();
+         diffusion_model_down_factor = sd_ctx->sd->get_diffusion_model_down_factor();
+         seed                        = sd_vid_gen_params->seed;
+@@ -5726,7 +5752,8 @@ SD_API bool generate_video(sd_ctx_t* sd_ctx,
+                                                         latents.audio_length,
+                                                         static_cast<float>(request.fps),
+                                                         request.cache_params,
+-                                                        latents.video_positions);
++                                                        latents.video_positions,
++                                                        request.min_guidance_scale);
+ 
+     int64_t sampling_end = ggml_time_ms();
+     if (final_latent.empty()) {

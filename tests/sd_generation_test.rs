@@ -42,6 +42,7 @@ fn test_model_file_exists() {
 #[test]
 fn test_sd_cpp_config_creation() {
     let config = SdCppConfig {
+        execution_mode: "cli".to_string(),
         executable_path: "/dev-data/ai-test/stable-diffusion.cpp/build/bin/sd-cli".to_string(),
         model_path: "/dev-data/ai-test/media_agent/models/checkpoints/v1-5-pruned-emaonly.safetensors".to_string(),
         backend: "cpu".to_string(),
@@ -59,6 +60,7 @@ fn test_sd_cpp_config_creation() {
         circuit_breaker_reset_secs: 60,
         extra_args: vec!["--output".to_string(), "/dev-data/ai-test/media_agent/output".to_string()],
         env_vars: std::collections::HashMap::new(),
+        ..SdCppConfig::default()
     };
     
     assert!(!config.executable_path.is_empty());
@@ -103,6 +105,7 @@ async fn test_real_text_to_image_generation() {
     
     // 创建配置
     let config = SdCppConfig {
+        execution_mode: "cli".to_string(),
         executable_path: sd_cli_path.to_string(),
         model_path: model_path.to_string(),
         backend: "cpu".to_string(),
@@ -120,6 +123,7 @@ async fn test_real_text_to_image_generation() {
         circuit_breaker_reset_secs: 60,
         extra_args: vec!["--output".to_string(), output_dir.to_string()],
         env_vars: std::collections::HashMap::new(),
+        ..SdCppConfig::default()
     };
     
     // 创建后端
@@ -136,7 +140,9 @@ async fn test_real_text_to_image_generation() {
         sampler: "euler".to_string(),
         seed: 42,
         model_path: model_path.to_string(),
-    };
+    loras: Vec::new(),
+            hires: None,
+        };
     
     println!("Starting real image generation...");
     println!("Prompt: {}", params.prompt);

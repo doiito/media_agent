@@ -462,9 +462,9 @@ pub fn register_smart_workflow_tools(
                         }),
                         "image_to_video" => json!({
                             "nodes": [
-                                {"id": "1", "type": "CheckpointLoaderSimple", "description": "Load SVD or SD checkpoint"},
+                                {"id": "1", "type": "CheckpointLoaderSimple", "description": "Load configured native Wan or SVD video model"},
                                 {"id": "2", "type": "LoadImage", "description": "Load input image (set image path in params, e.g. 'bk_0015.jpg')"},
-                                {"id": "3", "type": "SVDImageToVideo", "description": "Image to video using SVD"},
+                                {"id": "3", "type": "SVDImageToVideo", "description": "Compatibility node for native Wan/SVD image-to-video"},
                                 {"id": "4", "type": "VideoCombine", "description": "Combine frames to MP4"}
                             ],
                             "connections": [
@@ -473,7 +473,7 @@ pub fn register_smart_workflow_tools(
                                 {"from": ["2", "IMAGE"], "to": ["3", "image"]},
                                 {"from": ["3", "FRAMES"], "to": ["4", "frames"]}
                             ],
-                            "note": "For image_to_video: 1) LoadImage must use the uploaded image path. 2) SVDImageToVideo needs svd_xt checkpoint. 3) Set motion_bucket_id=127, motion_scale=1024, frames=25 for 5s video at 5fps. 4) VideoCombine fps should match output fps."
+                            "note": "For image_to_video: 1) LoadImage must use the uploaded image path. 2) Use the configured native video model. 3) Pass the complete motion prompt to SVDImageToVideo; Wan consumes it while SVD is image-only. 4) frames/fps must match the requested duration."
                         }),
                         "video" => json!({
                             "nodes": [

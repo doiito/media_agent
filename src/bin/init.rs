@@ -682,7 +682,7 @@ mod tests {
         let yaml = r#"
 huggingface:
   token: "test-token"
-  endpoint: "https://hf-mirror.com"
+  endpoint: "https://huggingface.co"
 models:
   - name: "test-model"
     repo: "org/repo"
@@ -701,7 +701,7 @@ sd_cli:
 "#;
         let config: ModelsConfig = serde_yaml::from_str(yaml).unwrap();
         assert_eq!(config.huggingface.token, "test-token");
-        assert_eq!(config.huggingface.endpoint, "https://hf-mirror.com");
+        assert_eq!(config.huggingface.endpoint, "https://huggingface.co");
         assert_eq!(config.models.len(), 1);
         assert_eq!(config.models[0].name, "test-model");
         assert!(config.models[0].required);

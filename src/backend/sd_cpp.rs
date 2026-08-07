@@ -3,13 +3,15 @@
 
 use crate::types::*;
 use crate::backend::{T2IParams, I2IParams, T2VParams, I2VParams};
+use crate::backend::sd_worker_protocol::{SdWorkerOperation, SdWorkerRequest, SdWorkerResponse};
 use serde::{Deserialize, Serialize};
 use std::io::{BufRead, BufReader, Write};
 use std::process::{Child, Command, Stdio};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::{Mutex, Semaphore};
-use log::{debug, error, info, warn};
+use tokio::io::AsyncWriteExt;
+use log::{debug, info, warn};
 
 // ============================================================================
 // 错误类型定义
@@ -58,6 +60,12 @@ impl From<SdError> for Error {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct BackendAttempt {
+    backend: String,
+    rng_mode: String,
+}
+
 // ============================================================================
 // 配置管理
 // ============================================================================
@@ -65,11 +73,95 @@ impl From<SdError> for Error {
 /// stable-diffusion.cpp 后端配置
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SdCppConfig {
+    /// 固定的 stable-diffusion.cpp 源码目录，用于版本与构建校验。
+    #[serde(default = "default_source_path")]
+    pub source_path: String,
+
     #[serde(default = "default_executable_path")]
     pub executable_path: String,
 
+    /// `native_worker` 使用 Rust Worker + C API；`cli` 仅用于诊断兼容。
+    #[serde(default = "default_execution_mode")]
+    pub execution_mode: String,
+
+    #[serde(default = "default_worker_path")]
+    pub worker_path: String,
+
+    #[serde(default = "default_bridge_library_path")]
+    pub bridge_library_path: String,
+
     #[serde(default)]
     pub model_path: String,
+
+    /// SD1.5 快速档模型(fast 质量档与 Tier4G 使用)。
+    #[serde(default)]
+    pub fast_model_path: String,
+
+    /// SDXL Q4_K_S GGUF(Tier8G 档,需 scripts/download_sdxl_gguf.sh)。
+    #[serde(default)]
+    pub sdxl_gguf_q4_path: String,
+
+    /// SDXL Q5_K_M GGUF(Tier12G 档)。
+    #[serde(default)]
+    pub sdxl_gguf_q5_path: String,
+
+    /// 图片模型独立 VAE(SDXL 改进 VAE)。空则用模型内置 VAE。
+    #[serde(default)]
+    pub image_vae_path: String,
+
+    /// 图片 LoRA(如 Tier4G 档 SD1.5 写实增强 epic_realism)。空则不启用。
+    #[serde(default)]
+    pub image_lora_path: String,
+
+    /// 图片 LoRA 权重。
+    #[serde(default = "default_image_lora_scale")]
+    pub image_lora_scale: f32,
+
+    /// 图片推理显存预算。`-1` 自动分段,小显存档位防 OOM。
+    #[serde(default = "default_image_max_vram")]
+    pub image_max_vram: String,
+
+    /// 显存档位覆盖(tier4g/tier8g/tier12g/tier16g)。None 时自动探测。
+    #[serde(default)]
+    pub gpu_tier: Option<String>,
+
+    /// 默认原生视频模型，与图片 checkpoint 分开管理。
+    #[serde(default)]
+    pub video_model_path: String,
+
+    /// Optional SVD checkpoint retained as a fast, image-conditioned fallback.
+    #[serde(default)]
+    pub svd_model_path: String,
+
+    /// Optional second diffusion stage for Wan2.2 A14B models.
+    #[serde(default)]
+    pub video_high_noise_model_path: String,
+
+    /// Text encoder used by prompt-conditioned native video models such as Wan.
+    #[serde(default)]
+    pub video_t5xxl_path: String,
+
+    /// Standalone VAE used by prompt-conditioned native video models.
+    #[serde(default)]
+    pub video_vae_path: String,
+
+    /// 视频模型使用的 CLIP Vision 权重。
+    #[serde(default)]
+    pub clip_vision_path: String,
+
+    /// SVD model-space dimensions. Delivery dimensions remain request-specific.
+    #[serde(default = "default_svd_native_width")]
+    pub svd_native_width: usize,
+
+    #[serde(default = "default_svd_native_height")]
+    pub svd_native_height: usize,
+
+    /// Native Wan/LTX inference dimensions. Delivery dimensions are request-specific.
+    #[serde(default = "default_semantic_video_native_width")]
+    pub semantic_video_native_width: usize,
+
+    #[serde(default = "default_semantic_video_native_height")]
+    pub semantic_video_native_height: usize,
 
     /// 计算后端 (cuda/vulkan/cpu/metal)
     #[serde(default = "default_backend")]
@@ -85,12 +177,30 @@ pub struct SdCppConfig {
     #[serde(default)]
     pub offload_to_cpu: bool,
 
+    /// Parameter residency assignment accepted by stable-diffusion.cpp.
+    #[serde(default)]
+    pub video_params_backend: String,
+
+    /// CUDA graph VRAM budget. `-1` keeps one GiB free and segments large graphs.
+    #[serde(default = "default_video_max_vram")]
+    pub video_max_vram: String,
+
+    #[serde(default)]
+    pub video_stream_layers: bool,
+
+    #[serde(default = "default_video_flow_shift")]
+    pub video_flow_shift: f32,
+
     /// RNG 模式 (cuda/cpu - ComfyUI兼容使用cpu)
     #[serde(default = "default_rng_mode")]
     pub rng_mode: String,
 
     #[serde(default = "default_timeout_secs")]
     pub timeout_secs: u64,
+
+    /// Video inference has substantially larger temporal graphs than image inference.
+    #[serde(default = "default_video_timeout_secs")]
+    pub video_timeout_secs: u64,
 
     #[serde(default = "default_max_retries")]
     pub max_retries: usize,
@@ -121,7 +231,50 @@ pub struct SdCppConfig {
 }
 
 fn default_executable_path() -> String {
-    std::env::var("SD_CPP_EXECUTABLE").unwrap_or_else(|_| "sd-cli".to_string())
+    std::env::var("SD_CPP_EXECUTABLE").unwrap_or_else(|_| {
+        let local = "/dev-data/ai-test/stable-diffusion.cpp/build-cuda/bin/sd-cli";
+        if std::path::Path::new(local).is_file() {
+            local.to_string()
+        } else {
+            "sd-cli".to_string()
+        }
+    })
+}
+
+fn default_source_path() -> String {
+    std::env::var("SD_CPP_SOURCE_DIR")
+        .unwrap_or_else(|_| "/dev-data/ai-test/stable-diffusion.cpp".to_string())
+}
+
+fn default_execution_mode() -> String {
+    std::env::var("SD_CPP_EXECUTION_MODE")
+        .unwrap_or_else(|_| "native_worker".to_string())
+}
+
+fn default_worker_path() -> String {
+    std::env::var("SD_CPP_WORKER")
+        .unwrap_or_else(|_| "target/release/media-sd-worker".to_string())
+}
+
+fn default_bridge_library_path() -> String {
+    std::env::var("SD_CPP_BRIDGE_LIBRARY")
+        .unwrap_or_else(|_| "native/runtime/lib/libmedia_sd_bridge.so".to_string())
+}
+
+fn default_svd_native_width() -> usize {
+    1024
+}
+
+fn default_svd_native_height() -> usize {
+    576
+}
+
+fn default_semantic_video_native_width() -> usize {
+    832
+}
+
+fn default_semantic_video_native_height() -> usize {
+    480
 }
 
 fn default_backend() -> String {
@@ -144,6 +297,26 @@ fn default_rng_mode() -> String {
 
 fn default_timeout_secs() -> u64 {
     300
+}
+
+fn default_video_timeout_secs() -> u64 {
+    1800
+}
+
+fn default_video_max_vram() -> String {
+    "-1".to_string()
+}
+
+fn default_video_flow_shift() -> f32 {
+    3.0
+}
+
+fn default_image_lora_scale() -> f32 {
+    0.7
+}
+
+fn default_image_max_vram() -> String {
+    "-1".to_string()
 }
 
 fn default_max_retries() -> usize {
@@ -170,17 +343,106 @@ fn default_circuit_breaker_reset_time() -> u64 {
     60
 }
 
+fn normalize_rng_mode(rng_mode: &str, backend: &str) -> String {
+    match rng_mode.trim() {
+        "" | "auto" => {
+            if backend.starts_with("cuda") {
+                "cuda".to_string()
+            } else {
+                "cpu".to_string()
+            }
+        }
+        value => value.to_string(),
+    }
+}
+
+fn build_backend_attempts(backend: &str, rng_mode: &str) -> Vec<BackendAttempt> {
+    let preferred_backend = match backend.trim() {
+        "" | "auto" => "cuda",
+        other => other,
+    };
+
+    let mut attempts = vec![BackendAttempt {
+        backend: preferred_backend.to_string(),
+        rng_mode: normalize_rng_mode(rng_mode, preferred_backend),
+    }];
+
+    if preferred_backend != "cpu" {
+        attempts.push(BackendAttempt {
+            backend: "cpu".to_string(),
+            rng_mode: "cpu".to_string(),
+        });
+    }
+
+    attempts
+}
+
+fn should_retry_with_cpu(stderr: &str) -> bool {
+    let detail = stderr.to_ascii_lowercase();
+    detail.contains("cuda driver version is insufficient")
+        || detail.contains("failed to initialize cuda")
+        || detail.contains("backend config failed: backend 'cuda' was not found")
+        || detail.contains("backend 'cuda' was not found")
+}
+
+fn summarize_process_output(stderr: &[u8], stdout: &[u8]) -> String {
+    let stderr_text = String::from_utf8_lossy(stderr);
+    let stdout_text = String::from_utf8_lossy(stdout);
+
+    let mut lines: Vec<String> = stderr_text
+        .lines()
+        .chain(stdout_text.lines())
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .take(20)
+        .map(|line| line.to_string())
+        .collect();
+
+    if lines.is_empty() {
+        lines.push("unknown error".to_string());
+    }
+
+    lines.join(" | ")
+}
+
 impl Default for SdCppConfig {
     fn default() -> Self {
         Self {
+            source_path: default_source_path(),
             executable_path: default_executable_path(),
+            execution_mode: default_execution_mode(),
+            worker_path: default_worker_path(),
+            bridge_library_path: default_bridge_library_path(),
             model_path: String::new(),
+            fast_model_path: String::new(),
+            sdxl_gguf_q4_path: String::new(),
+            sdxl_gguf_q5_path: String::new(),
+            image_vae_path: String::new(),
+            image_lora_path: String::new(),
+            image_lora_scale: default_image_lora_scale(),
+            image_max_vram: default_image_max_vram(),
+            gpu_tier: None,
+            video_model_path: String::new(),
+            svd_model_path: String::new(),
+            video_high_noise_model_path: String::new(),
+            video_t5xxl_path: String::new(),
+            video_vae_path: String::new(),
+            clip_vision_path: String::new(),
+            svd_native_width: default_svd_native_width(),
+            svd_native_height: default_svd_native_height(),
+            semantic_video_native_width: default_semantic_video_native_width(),
+            semantic_video_native_height: default_semantic_video_native_height(),
             backend: default_backend(),
             precision: default_precision(),
             flash_attention: default_flash_attention(),
             offload_to_cpu: false,
+            video_params_backend: String::new(),
+            video_max_vram: default_video_max_vram(),
+            video_stream_layers: false,
+            video_flow_shift: default_video_flow_shift(),
             rng_mode: default_rng_mode(),
             timeout_secs: default_timeout_secs(),
+            video_timeout_secs: default_video_timeout_secs(),
             max_retries: default_max_retries(),
             max_concurrent_tasks: default_max_concurrent_tasks(),
             max_queue_size: default_max_queue_size(),
@@ -204,8 +466,84 @@ impl SdCppConfig {
         if let Ok(val) = std::env::var("SD_CPP_EXECUTABLE") {
             config.executable_path = val;
         }
+        if let Ok(val) = std::env::var("SD_CPP_SOURCE_DIR") {
+            config.source_path = val;
+        }
+        if let Ok(val) = std::env::var("SD_CPP_EXECUTION_MODE") {
+            config.execution_mode = val;
+        }
+        if let Ok(val) = std::env::var("SD_CPP_WORKER") {
+            config.worker_path = val;
+        }
+        if let Ok(val) = std::env::var("SD_CPP_BRIDGE_LIBRARY") {
+            config.bridge_library_path = val;
+        }
         if let Ok(val) = std::env::var("SD_CPP_MODEL_PATH") {
             config.model_path = val;
+        }
+        if let Ok(val) = std::env::var("SD_CPP_FAST_MODEL_PATH") {
+            config.fast_model_path = val;
+        }
+        if let Ok(val) = std::env::var("SD_CPP_SDXL_GGUF_Q4_PATH") {
+            config.sdxl_gguf_q4_path = val;
+        }
+        if let Ok(val) = std::env::var("SD_CPP_SDXL_GGUF_Q5_PATH") {
+            config.sdxl_gguf_q5_path = val;
+        }
+        if let Ok(val) = std::env::var("SD_CPP_IMAGE_VAE_PATH") {
+            config.image_vae_path = val;
+        }
+        if let Ok(val) = std::env::var("SD_CPP_IMAGE_LORA_PATH") {
+            config.image_lora_path = val;
+        }
+        if let Ok(val) = std::env::var("SD_CPP_IMAGE_LORA_SCALE") {
+            if let Ok(value) = val.parse() {
+                config.image_lora_scale = value;
+            }
+        }
+        if let Ok(val) = std::env::var("SD_CPP_IMAGE_MAX_VRAM") {
+            config.image_max_vram = val;
+        }
+        if let Ok(val) = std::env::var("SD_CPP_GPU_TIER") {
+            config.gpu_tier = Some(val);
+        }
+        if let Ok(val) = std::env::var("SD_CPP_VIDEO_MODEL_PATH") {
+            config.video_model_path = val;
+        }
+        if let Ok(val) = std::env::var("SD_CPP_SVD_MODEL_PATH") {
+            config.svd_model_path = val;
+        }
+        if let Ok(val) = std::env::var("SD_CPP_VIDEO_HIGH_NOISE_MODEL_PATH") {
+            config.video_high_noise_model_path = val;
+        }
+        if let Ok(val) = std::env::var("SD_CPP_VIDEO_T5XXL_PATH") {
+            config.video_t5xxl_path = val;
+        }
+        if let Ok(val) = std::env::var("SD_CPP_VIDEO_VAE_PATH") {
+            config.video_vae_path = val;
+        }
+        if let Ok(val) = std::env::var("SD_CPP_CLIP_VISION_PATH") {
+            config.clip_vision_path = val;
+        }
+        if let Ok(val) = std::env::var("SD_CPP_SVD_NATIVE_WIDTH") {
+            if let Ok(value) = val.parse() {
+                config.svd_native_width = value;
+            }
+        }
+        if let Ok(val) = std::env::var("SD_CPP_SVD_NATIVE_HEIGHT") {
+            if let Ok(value) = val.parse() {
+                config.svd_native_height = value;
+            }
+        }
+        if let Ok(val) = std::env::var("SD_CPP_SEMANTIC_VIDEO_NATIVE_WIDTH") {
+            if let Ok(value) = val.parse() {
+                config.semantic_video_native_width = value;
+            }
+        }
+        if let Ok(val) = std::env::var("SD_CPP_SEMANTIC_VIDEO_NATIVE_HEIGHT") {
+            if let Ok(value) = val.parse() {
+                config.semantic_video_native_height = value;
+            }
         }
         if let Ok(val) = std::env::var("SD_CPP_BACKEND") {
             config.backend = val;
@@ -222,9 +560,28 @@ impl SdCppConfig {
         if let Ok(val) = std::env::var("SD_CPP_OFFLOAD_CPU") {
             config.offload_to_cpu = val == "true" || val == "1";
         }
+        if let Ok(val) = std::env::var("SD_CPP_VIDEO_PARAMS_BACKEND") {
+            config.video_params_backend = val;
+        }
+        if let Ok(val) = std::env::var("SD_CPP_VIDEO_MAX_VRAM") {
+            config.video_max_vram = val;
+        }
+        if let Ok(val) = std::env::var("SD_CPP_VIDEO_STREAM_LAYERS") {
+            config.video_stream_layers = val == "true" || val == "1";
+        }
+        if let Ok(val) = std::env::var("SD_CPP_VIDEO_FLOW_SHIFT") {
+            if let Ok(value) = val.parse() {
+                config.video_flow_shift = value;
+            }
+        }
         if let Ok(val) = std::env::var("SD_CPP_TIMEOUT_SECS") {
             if let Ok(secs) = val.parse() {
                 config.timeout_secs = secs;
+            }
+        }
+        if let Ok(val) = std::env::var("SD_CPP_VIDEO_TIMEOUT_SECS") {
+            if let Ok(secs) = val.parse() {
+                config.video_timeout_secs = secs;
             }
         }
         if let Ok(val) = std::env::var("SD_CPP_MAX_RETRIES") {
@@ -801,6 +1158,20 @@ pub struct StableDiffusionCppBackend {
     config: SdCppConfig,
 }
 
+struct NativeTemporaryFiles {
+    input: Option<String>,
+    output: String,
+}
+
+impl Drop for NativeTemporaryFiles {
+    fn drop(&mut self) {
+        if let Some(path) = &self.input {
+            let _ = std::fs::remove_file(path);
+        }
+        let _ = std::fs::remove_file(&self.output);
+    }
+}
+
 impl StableDiffusionCppBackend {
     pub fn new(config: SdCppConfig) -> Self {
         let semaphore = Arc::new(Semaphore::new(config.max_concurrent_tasks));
@@ -811,6 +1182,229 @@ impl StableDiffusionCppBackend {
             semaphore,
             config,
         }
+    }
+
+    fn uses_native_worker(&self) -> bool {
+        self.config.execution_mode.eq_ignore_ascii_case("native_worker")
+    }
+
+    fn native_request(
+        &self,
+        operation: SdWorkerOperation,
+        model_path: String,
+        prompt: String,
+        negative_prompt: String,
+        width: usize,
+        height: usize,
+        steps: usize,
+        cfg: f32,
+        sampler: &str,
+        strength: f32,
+        seed: i64,
+        frames: usize,
+        fps: usize,
+        input_path: Option<String>,
+        output_path: String,
+    ) -> SdWorkerRequest {
+        let is_video = operation.is_video();
+        let is_svd = is_video && is_svd_model_path(&model_path);
+        let uses_standalone_video_model = is_video && !is_svd;
+        let (sampler, mut scheduler) = normalize_native_sampler(sampler);
+        if is_svd && scheduler == "discrete" {
+            // SVD-XT was trained with continuous EDM timesteps and Karras
+            // sigmas. Keep the simple Web UI "Euler" choice on that valid
+            // model-specific schedule instead of ordinary SD beta sigmas.
+            scheduler = "karras".to_string();
+        } else if uses_standalone_video_model {
+            // Wan/LTX choose a scheduler from model metadata when none is set.
+            scheduler.clear();
+        }
+        let params_backend = if uses_standalone_video_model
+            && (self.config.offload_to_cpu
+                || (self.config.video_stream_layers
+                    && self.config.video_params_backend.trim().is_empty()))
+        {
+            "*=cpu".to_string()
+        } else if uses_standalone_video_model {
+            self.config.video_params_backend.clone()
+        } else {
+            String::new()
+        };
+        let model_is_gguf = is_gguf_path(&model_path);
+        SdWorkerRequest {
+            request_id: uuid::Uuid::new_v4().to_string(),
+            operation,
+            bridge_library_path: self.config.bridge_library_path.clone(),
+            model_path: if uses_standalone_video_model {
+                String::new()
+            } else {
+                model_path.clone()
+            },
+            diffusion_model_path: if uses_standalone_video_model {
+                model_path
+            } else {
+                String::new()
+            },
+            high_noise_diffusion_model_path: if uses_standalone_video_model {
+                self.config.video_high_noise_model_path.clone()
+            } else {
+                String::new()
+            },
+            clip_vision_path: if is_svd {
+                self.config.clip_vision_path.clone()
+            } else {
+                String::new()
+            },
+            t5xxl_path: if uses_standalone_video_model {
+                self.config.video_t5xxl_path.clone()
+            } else {
+                String::new()
+            },
+            vae_path: if uses_standalone_video_model {
+                self.config.video_vae_path.clone()
+            } else if model_is_gguf || !self.config.image_vae_path.is_empty() {
+                self.config.image_vae_path.clone()
+            } else {
+                String::new()
+            },
+            backend: self.config.backend.clone(),
+            params_backend,
+            max_vram: if uses_standalone_video_model {
+                self.config.video_max_vram.clone()
+            } else {
+                self.config.image_max_vram.clone()
+            },
+            weight_type: if uses_standalone_video_model || model_is_gguf {
+                // GGUF 保留文件内张量类型,避免把量化模型展开成 f16 内存。
+                String::new()
+            } else {
+                self.config.precision.clone()
+            },
+            rng_type: normalize_rng_mode(&self.config.rng_mode, &self.config.backend),
+            threads: std::thread::available_parallelism()
+                .map(|value| value.get() as i32)
+                .unwrap_or(4),
+            flash_attention: self.config.flash_attention,
+            stream_layers: uses_standalone_video_model && self.config.video_stream_layers,
+            prompt,
+            negative_prompt,
+            sampler,
+            scheduler,
+            width: width as u32,
+            height: height as u32,
+            output_width: width as u32,
+            output_height: height as u32,
+            steps: steps as i32,
+            cfg,
+            flow_shift: if uses_standalone_video_model {
+                self.config.video_flow_shift
+            } else {
+                0.0
+            },
+            min_cfg: 1.0,
+            noise_aug_strength: 0.02,
+            strength,
+            seed,
+            frames: frames as i32,
+            fps: fps as i32,
+            motion_bucket_id: 127,
+            input_path,
+            output_path,
+            loras: Vec::new(),
+            hires: None,
+        }
+    }
+
+    async fn run_native_worker(&self, request: SdWorkerRequest) -> Result<Vec<u8>, SdError> {
+        if !std::path::Path::new(&self.config.worker_path).is_file() {
+            return Err(SdError::ConfigurationError(format!(
+                "Rust stable-diffusion worker not found: {}. Run scripts/build_native_runtime.sh",
+                self.config.worker_path
+            )));
+        }
+        if !std::path::Path::new(&self.config.bridge_library_path).is_file() {
+            return Err(SdError::ConfigurationError(format!(
+                "stable-diffusion.cpp bridge not found: {}. Run scripts/build_native_runtime.sh",
+                self.config.bridge_library_path
+            )));
+        }
+
+        let timeout_secs = if request.operation.is_video() {
+            self.config.video_timeout_secs
+        } else {
+            self.config.timeout_secs
+        };
+        let serialized = serde_json::to_vec(&request)?;
+        let output_path = request.output_path.clone();
+        let _temporary_files = NativeTemporaryFiles {
+            input: request.input_path.clone(),
+            output: output_path.clone(),
+        };
+        let mut command = tokio::process::Command::new(&self.config.worker_path);
+        command
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .kill_on_drop(true);
+        for (key, value) in &self.config.env_vars {
+            command.env(key, value);
+        }
+
+        let mut child = command.spawn().map_err(|error| {
+            SdError::ProcessStartFailed(format!(
+                "Failed to start Rust stable-diffusion worker '{}': {}",
+                self.config.worker_path, error
+            ))
+        })?;
+        let mut stdin = child.stdin.take().ok_or_else(|| {
+            SdError::CommunicationError("native worker stdin is unavailable".to_string())
+        })?;
+        stdin.write_all(&serialized).await.map_err(|error| {
+            SdError::CommunicationError(format!("cannot send native worker request: {}", error))
+        })?;
+        stdin.shutdown().await.map_err(|error| {
+            SdError::CommunicationError(format!("cannot close native worker request: {}", error))
+        })?;
+        drop(stdin);
+
+        let output = tokio::time::timeout(
+            Duration::from_secs(timeout_secs),
+            child.wait_with_output(),
+        )
+        .await
+        .map_err(|_| SdError::TimeoutError(Duration::from_secs(timeout_secs)))?
+        .map_err(|error| {
+            SdError::CommunicationError(format!("cannot collect native worker output: {}", error))
+        })?;
+
+        let response = serde_json::from_slice::<SdWorkerResponse>(&output.stdout).map_err(|error| {
+            SdError::ExecutionFailed(format!(
+                "native worker returned invalid JSON (exit={}): {} | {}",
+                output.status.code().unwrap_or(-1),
+                error,
+                summarize_process_output(&output.stderr, &output.stdout)
+            ))
+        })?;
+        if !output.status.success() || response.status != "success" {
+            return Err(SdError::ExecutionFailed(
+                response.error.unwrap_or_else(|| {
+                    summarize_process_output(&output.stderr, &output.stdout)
+                }),
+            ));
+        }
+
+        let bytes = std::fs::read(&output_path).map_err(|error| {
+            SdError::IoError(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                format!("native worker output '{}' is unavailable: {}", output_path, error),
+            ))
+        })?;
+        if bytes.is_empty() {
+            return Err(SdError::ExecutionFailed(
+                "native worker produced an empty media file".to_string(),
+            ));
+        }
+        Ok(bytes)
     }
 
     async fn run_sd_cli_text_to_image(&self, params: &T2IParams) -> Result<Vec<u8>, SdError> {
@@ -832,54 +1426,65 @@ impl StableDiffusionCppBackend {
         let executable = &self.config.executable_path;
         let model = &self.config.model_path;
 
-        let mut cmd = std::process::Command::new(executable);
-        cmd.arg("--model").arg(model)
-            .arg("--prompt").arg(&params.prompt)
-            .arg("--output").arg(&output_path)
-            .arg("--backend").arg(&self.config.backend)
-            .arg("--rng").arg(&self.config.rng_mode)
-            .arg("--steps").arg(params.steps.to_string())
-            .arg("--cfg-scale").arg(params.cfg.to_string())
-            .arg("--sampling-method").arg(&params.sampler)
-            .arg("--width").arg(params.width.to_string())
-            .arg("--height").arg(params.height.to_string())
-            .arg("--seed").arg(params.seed.to_string());
+        let mut last_error = String::new();
 
-        if !params.negative_prompt.is_empty() {
-            cmd.arg("--negative-prompt").arg(&params.negative_prompt);
-        }
+        for attempt in build_backend_attempts(&self.config.backend, &self.config.rng_mode) {
+            let mut cmd = std::process::Command::new(executable);
+            cmd.arg("--model").arg(model)
+                .arg("--prompt").arg(&params.prompt)
+                .arg("--output").arg(&output_path)
+                .arg("--backend").arg(&attempt.backend)
+                .arg("--rng").arg(&attempt.rng_mode)
+                .arg("--steps").arg(params.steps.to_string())
+                .arg("--cfg-scale").arg(params.cfg.to_string())
+                .arg("--sampling-method").arg(&params.sampler)
+                .arg("--width").arg(params.width.to_string())
+                .arg("--height").arg(params.height.to_string())
+                .arg("--seed").arg(params.seed.to_string());
 
-        // sd-cli doesn't support standalone --flash-attention flag;
-        // flash attention is compiled in via GGML_CUDA_FA cmake option.
-        // Add any model-specific args here if needed.
+            if !params.negative_prompt.is_empty() {
+                cmd.arg("--negative-prompt").arg(&params.negative_prompt);
+            }
 
-        info!("Running sd-cli: {} --model {} --backend {} --steps {} --sampling-method {} --width {}x{}",
-            executable, model, self.config.backend, params.steps, params.sampler, params.width, params.height);
+            info!(
+                "Running sd-cli: {} --model {} --backend {} --steps {} --sampling-method {} --width {}x{}",
+                executable, model, attempt.backend, params.steps, params.sampler, params.width, params.height
+            );
 
-        let output = cmd.output().map_err(|e| {
-            SdError::ProcessStartFailed(format!("Failed to run sd-cli: {}", e))
-        })?;
+            let output = cmd.output().map_err(|e| {
+                SdError::ProcessStartFailed(format!("Failed to run sd-cli: {}", e))
+            })?;
 
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(SdError::ExecutionFailed(format!(
+            if output.status.success() {
+                let image_data = std::fs::read(&output_path).map_err(|e| {
+                    SdError::IoError(std::io::Error::new(
+                        std::io::ErrorKind::NotFound,
+                        format!("Failed to read sd-cli output '{}': {}", output_path, e),
+                    ))
+                })?;
+
+                let _ = std::fs::remove_file(&output_path);
+                return Ok(image_data);
+            }
+
+            let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+            last_error = format!(
                 "sd-cli failed (exit={}): {}",
                 output.status.code().unwrap_or(-1),
-                stderr.lines().next().unwrap_or("unknown error")
-            )));
+                summarize_process_output(&output.stderr, &output.stdout)
+            );
+
+            if attempt.backend == "cpu" || !should_retry_with_cpu(&stderr) {
+                break;
+            }
+
+            warn!(
+                "sd-cli backend '{}' unavailable, retrying with CPU fallback",
+                attempt.backend
+            );
         }
 
-        let image_data = std::fs::read(&output_path).map_err(|e| {
-            SdError::IoError(std::io::Error::new(
-                std::io::ErrorKind::NotFound,
-                format!("Failed to read sd-cli output '{}': {}", output_path, e),
-            ))
-        })?;
-
-        // 清理临时文件
-        let _ = std::fs::remove_file(&output_path);
-
-        Ok(image_data)
+        Err(SdError::ExecutionFailed(last_error))
     }
 
     /// 文生图
@@ -888,7 +1493,46 @@ impl StableDiffusionCppBackend {
             SdError::ResourceLimitExceeded(format!("Failed to acquire semaphore: {}", e))
         })?;
 
-        // 使用直接子进程调用（sd-cli 不支持 stdin/stdout 协议）
+        if self.uses_native_worker() {
+            let model_path = resolve_model_path(&params.model_path, &self.config.model_path)?;
+            validate_native_model_file(&model_path, "diffusion model")?;
+            let output_path = format!("/tmp/media_sd_{}.png", uuid::Uuid::new_v4());
+            let loras = params.loras.clone();
+            let hires = params.hires;
+            let mut request = self.native_request(
+                SdWorkerOperation::TextToImage,
+                model_path,
+                params.prompt,
+                params.negative_prompt,
+                params.width,
+                params.height,
+                params.steps,
+                params.cfg,
+                &params.sampler,
+                1.0,
+                params.seed as i64,
+                0,
+                0,
+                None,
+                output_path,
+            );
+            request.loras = loras
+                .into_iter()
+                .map(|lora| crate::backend::sd_worker_protocol::WorkerLora {
+                    path: lora.path,
+                    multiplier: lora.multiplier,
+                })
+                .collect();
+            if let Some(hires) = hires {
+                request.hires = Some(crate::backend::sd_worker_protocol::WorkerHires {
+                    scale: hires.scale,
+                    steps: hires.steps as i32,
+                    denoising_strength: hires.denoising_strength,
+                });
+            }
+            return self.run_native_worker(request).await;
+        }
+
         self.run_sd_cli_text_to_image(&params).await
     }
 
@@ -908,65 +1552,77 @@ impl StableDiffusionCppBackend {
             uuid::Uuid::new_v4()
         );
 
-        // 将输入图像写入临时文件（sd-cli 的 --image 接受路径）
-        let input_path = format!("/tmp/sd_input_{}.png", uuid::Uuid::new_v4());
-        std::fs::write(&input_path, &params.input_image).map_err(|e| {
-            SdError::IoError(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                format!("Failed to write input image: {}", e),
-            ))
-        })?;
+        // Normalize uploaded JPEG/WebP/PNG bytes to a real PNG before passing a
+        // path to native decoders. Merely renaming JPEG bytes to .png makes the
+        // decoder select the wrong codec.
+        let input_path = write_temporary_input_png("sd_input", &params.input_image)?;
 
         let executable = &self.config.executable_path;
         let model = &self.config.model_path;
 
-        let mut cmd = std::process::Command::new(executable);
-        cmd.arg("--model").arg(model)
-            .arg("--prompt").arg(&params.prompt)
-            .arg("--image").arg(&input_path)
-            .arg("--output").arg(&output_path)
-            .arg("--backend").arg(&self.config.backend)
-            .arg("--rng").arg(&self.config.rng_mode)
-            .arg("--steps").arg(params.steps.to_string())
-            .arg("--cfg-scale").arg(params.cfg.to_string())
-            .arg("--sampling-method").arg(&params.sampler)
-            .arg("--strength").arg(params.denoise.to_string())
-            .arg("--width").arg(params.width.to_string())
-            .arg("--height").arg(params.height.to_string())
-            .arg("--seed").arg(params.seed.to_string());
+        let mut last_error = String::new();
 
-        if !params.negative_prompt.is_empty() {
-            cmd.arg("--negative-prompt").arg(&params.negative_prompt);
-        }
+        for attempt in build_backend_attempts(&self.config.backend, &self.config.rng_mode) {
+            let mut cmd = std::process::Command::new(executable);
+            cmd.arg("--model").arg(model)
+                .arg("--prompt").arg(&params.prompt)
+                .arg("--image").arg(&input_path)
+                .arg("--output").arg(&output_path)
+                .arg("--backend").arg(&attempt.backend)
+                .arg("--rng").arg(&attempt.rng_mode)
+                .arg("--steps").arg(params.steps.to_string())
+                .arg("--cfg-scale").arg(params.cfg.to_string())
+                .arg("--sampling-method").arg(&params.sampler)
+                .arg("--strength").arg(params.denoise.to_string())
+                .arg("--width").arg(params.width.to_string())
+                .arg("--height").arg(params.height.to_string())
+                .arg("--seed").arg(params.seed.to_string());
 
-        info!("Running sd-cli img2img: {} --backend {} --steps {} --sampling-method {} --denoise {} --width {}x{}",
-            executable, self.config.backend, params.steps, params.sampler, params.denoise, params.width, params.height);
+            if !params.negative_prompt.is_empty() {
+                cmd.arg("--negative-prompt").arg(&params.negative_prompt);
+            }
 
-        let output = cmd.output().map_err(|e| {
-            SdError::ProcessStartFailed(format!("Failed to run sd-cli: {}", e))
-        })?;
+            info!(
+                "Running sd-cli img2img: {} --backend {} --steps {} --sampling-method {} --denoise {} --width {}x{}",
+                executable, attempt.backend, params.steps, params.sampler, params.denoise, params.width, params.height
+            );
 
-        // 清理输入临时文件
-        let _ = std::fs::remove_file(&input_path);
+            let output = cmd.output().map_err(|e| {
+                SdError::ProcessStartFailed(format!("Failed to run sd-cli: {}", e))
+            })?;
 
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(SdError::ExecutionFailed(format!(
+            if output.status.success() {
+                let image_data = std::fs::read(&output_path).map_err(|e| {
+                    SdError::IoError(std::io::Error::new(
+                        std::io::ErrorKind::NotFound,
+                        format!("Failed to read sd-cli output '{}': {}", output_path, e),
+                    ))
+                })?;
+
+                let _ = std::fs::remove_file(&input_path);
+                let _ = std::fs::remove_file(&output_path);
+                return Ok(image_data);
+            }
+
+            let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+            last_error = format!(
                 "sd-cli img2img failed (exit={}): {}",
                 output.status.code().unwrap_or(-1),
-                stderr.lines().next().unwrap_or("unknown error")
-            )));
+                summarize_process_output(&output.stderr, &output.stdout)
+            );
+
+            if attempt.backend == "cpu" || !should_retry_with_cpu(&stderr) {
+                break;
+            }
+
+            warn!(
+                "sd-cli img2img backend '{}' unavailable, retrying with CPU fallback",
+                attempt.backend
+            );
         }
 
-        let image_data = std::fs::read(&output_path).map_err(|e| {
-            SdError::IoError(std::io::Error::new(
-                std::io::ErrorKind::NotFound,
-                format!("Failed to read sd-cli output '{}': {}", output_path, e),
-            ))
-        })?;
-
-        let _ = std::fs::remove_file(&output_path);
-        Ok(image_data)
+        let _ = std::fs::remove_file(&input_path);
+        Err(SdError::ExecutionFailed(last_error))
     }
 
     /// 图生图
@@ -975,7 +1631,40 @@ impl StableDiffusionCppBackend {
             SdError::ResourceLimitExceeded(format!("Failed to acquire semaphore: {}", e))
         })?;
 
-        // 使用直接子进程调用（sd-cli 不支持 stdin/stdout 协议）
+        if self.uses_native_worker() {
+            let model_path = resolve_model_path(&params.model_path, &self.config.model_path)?;
+            validate_native_model_file(&model_path, "diffusion model")?;
+            let input_path =
+                write_temporary_input_png("media_sd_input", &params.input_image)?;
+            let output_path = format!("/tmp/media_sd_{}.png", uuid::Uuid::new_v4());
+            let loras = params.loras.clone();
+            let mut request = self.native_request(
+                SdWorkerOperation::ImageToImage,
+                model_path,
+                params.prompt,
+                params.negative_prompt,
+                params.width,
+                params.height,
+                params.steps,
+                params.cfg,
+                &params.sampler,
+                params.denoise,
+                params.seed as i64,
+                0,
+                0,
+                Some(input_path),
+                output_path,
+            );
+            request.loras = loras
+                .into_iter()
+                .map(|lora| crate::backend::sd_worker_protocol::WorkerLora {
+                    path: lora.path,
+                    multiplier: lora.multiplier,
+                })
+                .collect();
+            return self.run_native_worker(request).await;
+        }
+
         self.run_sd_cli_image_to_image(&params).await
     }
 
@@ -984,6 +1673,98 @@ impl StableDiffusionCppBackend {
         let _permit = self.semaphore.acquire().await.map_err(|e| {
             SdError::ResourceLimitExceeded(format!("Failed to acquire semaphore: {}", e))
         })?;
+
+        if self.uses_native_worker() {
+            let model_path = resolve_model_path(&params.model_path, &self.config.video_model_path)?;
+            validate_native_model_file(&model_path, "video diffusion model")?;
+            validate_native_video_assets(&self.config, &model_path)?;
+
+            if is_svd_model_path(&model_path) {
+                let image_model = resolve_model_path("", &self.config.model_path)?;
+                validate_native_model_file(&image_model, "text-to-video first-frame model")?;
+                let first_frame_output = format!(
+                    "/tmp/media_sd_t2v_first_{}.png",
+                    uuid::Uuid::new_v4()
+                );
+                let first_frame_request = self.native_request(
+                    SdWorkerOperation::TextToImage,
+                    image_model,
+                    params.prompt.clone(),
+                    params.negative_prompt.clone(),
+                    self.config.svd_native_width,
+                    self.config.svd_native_height,
+                    params.steps,
+                    7.0,
+                    "dpm++2m_karras",
+                    1.0,
+                    params.seed as i64,
+                    0,
+                    0,
+                    None,
+                    first_frame_output,
+                );
+                info!(
+                    "Native text-to-video composition: generating {}x{} first frame",
+                    self.config.svd_native_width,
+                    self.config.svd_native_height
+                );
+                let first_frame = self.run_native_worker(first_frame_request).await?;
+                let input_path =
+                    write_temporary_input_png("media_sd_t2v_input", &first_frame)?;
+
+                let output_path = format!("/tmp/media_sd_{}.mp4", uuid::Uuid::new_v4());
+                let mut video_request = self.native_request(
+                    SdWorkerOperation::ImageToVideo,
+                    model_path,
+                    params.prompt,
+                    params.negative_prompt,
+                    self.config.svd_native_width,
+                    self.config.svd_native_height,
+                    params.steps,
+                    params.cfg,
+                    "euler",
+                    1.0,
+                    params.seed as i64,
+                    params.frames,
+                    params.fps,
+                    Some(input_path),
+                    output_path,
+                );
+                video_request.output_width = params.width as u32;
+                video_request.output_height = params.height as u32;
+                video_request.motion_bucket_id = params.motion_bucket_id;
+                video_request.min_cfg = params.min_cfg;
+                video_request.noise_aug_strength = params.noise_aug_strength;
+                return self.run_native_worker(video_request).await;
+            }
+
+            let output_path = format!("/tmp/media_sd_{}.mp4", uuid::Uuid::new_v4());
+            let (generation_width, generation_height) = semantic_video_dimensions(
+                &self.config,
+                params.width,
+                params.height,
+            );
+            let mut request = self.native_request(
+                SdWorkerOperation::TextToVideo,
+                model_path,
+                params.prompt,
+                params.negative_prompt,
+                generation_width,
+                generation_height,
+                params.steps,
+                params.cfg,
+                "euler",
+                1.0,
+                params.seed as i64,
+                params.frames,
+                params.fps,
+                None,
+                output_path,
+            );
+            request.output_width = params.width as u32;
+            request.output_height = params.height as u32;
+            return self.run_native_worker(request).await;
+        }
 
         let request = SdRequest {
             mode: "text_to_video".to_string(),
@@ -1015,48 +1796,253 @@ impl StableDiffusionCppBackend {
         Ok(video_data)
     }
 
+    /// 图生视频 - 直接子进程调用（sd-cli 不支持 stdin/stdout 协议）
+    async fn run_sd_cli_image_to_video(&self, params: &I2VParams) -> Result<Vec<u8>, SdError> {
+        if self.config.executable_path.is_empty() {
+            return Err(SdError::ConfigurationError(
+                "executable_path is not configured".to_string()
+            ));
+        }
+
+        // 使用 params.model_path（SVD 模型路径），而非 self.config.model_path
+        let model_path = if !params.model_path.is_empty() {
+            if std::path::Path::new(&params.model_path).exists() {
+                params.model_path.clone()
+            } else {
+                // 尝试在 models/checkpoints 下查找
+                let candidate = format!("models/checkpoints/{}", params.model_path);
+                if std::path::Path::new(&candidate).exists() {
+                    candidate
+                } else {
+                    params.model_path.clone()
+                }
+            }
+        } else {
+            return Err(SdError::ConfigurationError(
+                "params.model_path is empty - SVD model path required".to_string()
+            ));
+        };
+
+        validate_native_model_file(&model_path, "SVD checkpoint")?;
+
+        // 输出路径（视频文件）
+        let output_path = format!("/tmp/svd_output_{}.mp4", uuid::Uuid::new_v4());
+
+        let input_path = write_temporary_input_png("svd_input", &params.input_image)?;
+
+        let executable = &self.config.executable_path;
+
+        let clip_vision_path = if !self.config.clip_vision_path.trim().is_empty() {
+            Some(self.config.clip_vision_path.clone())
+        } else {
+            [
+                "models/clip_vision/clip_vit_h_14.safetensors",
+                "models/clip_vision/clip-vit-h-14.safetensors",
+                "models/clip_vision/clip_vit_h14.safetensors",
+            ]
+            .iter()
+            .find(|path| std::path::Path::new(path).is_file())
+            .map(|path| (*path).to_string())
+        }
+        .ok_or_else(|| {
+            SdError::ConfigurationError(
+                "SVD requires a CLIP ViT-H/14 vision model; configure sd_cpp.clip_vision_path"
+                    .to_string(),
+            )
+        })?;
+        validate_native_model_file(&clip_vision_path, "CLIP Vision model")?;
+        info!("Using clip_vision: {}", clip_vision_path);
+
+        let mut last_error = String::new();
+
+        for attempt in build_backend_attempts(&self.config.backend, &self.config.rng_mode) {
+            let mut cmd = std::process::Command::new(executable);
+            cmd.arg("-M").arg("vid_gen")
+                .arg("-m").arg(&model_path)
+                .arg("--image").arg(&input_path)
+                .arg("-o").arg(&output_path)
+                .arg("--backend").arg(&attempt.backend)
+                .arg("--rng").arg(&attempt.rng_mode)
+                .arg("--steps").arg(params.steps.to_string())
+                .arg("--cfg-scale").arg(params.cfg.to_string())
+                .arg("--seed").arg(params.seed.to_string())
+                .arg("--video-frames").arg(params.frames.to_string())
+                .arg("--fps").arg(params.fps.to_string());
+
+            cmd.arg("--clip_vision").arg(&clip_vision_path);
+
+            if !params.negative_prompt.is_empty() {
+                cmd.arg("--negative-prompt").arg(&params.negative_prompt);
+            }
+
+            info!(
+                "Running sd-cli SVD: {} -M vid_gen -m {} --backend {} --image {} --video-frames {} --fps {}",
+                executable, model_path, attempt.backend, input_path, params.frames, params.fps
+            );
+
+            let output = cmd.output().map_err(|e| {
+                SdError::ProcessStartFailed(format!("Failed to run sd-cli SVD: {}", e))
+            })?;
+
+            if output.status.success() {
+                let _ = std::fs::remove_file(&input_path);
+                return self.read_video_output_or_frames(&output_path, params);
+            }
+
+            let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+            last_error = format!(
+                "sd-cli SVD failed (exit={}): {}",
+                output.status.code().unwrap_or(-1),
+                summarize_process_output(&output.stderr, &output.stdout)
+            );
+
+            if attempt.backend == "cpu" || !should_retry_with_cpu(&stderr) {
+                break;
+            }
+
+            warn!(
+                "sd-cli SVD backend '{}' unavailable, retrying with CPU fallback",
+                attempt.backend
+            );
+        }
+
+        let _ = std::fs::remove_file(&input_path);
+        Err(SdError::ExecutionFailed(last_error))
+    }
+
+    fn read_video_output_or_frames(&self, output_path: &str, params: &I2VParams) -> Result<Vec<u8>, SdError> {
+        let output_path_obj = std::path::Path::new(output_path);
+        if !output_path_obj.exists() {
+            // sd-cli 可能输出 PNG 帧序列而非 MP4（未编译 ffmpeg 支持时）
+            let output_dir = std::path::Path::new(output_path).parent().unwrap_or(std::path::Path::new("/tmp"));
+            let stem = std::path::Path::new(output_path).file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_default();
+            let mut frames: Vec<String> = Vec::new();
+            for entry in std::fs::read_dir(output_dir).into_iter().flatten() {
+                if let Ok(entry) = entry {
+                    let name = entry.file_name().to_string_lossy().to_string();
+                    if name.starts_with(&stem) && (name.ends_with(".png") || name.ends_with(".jpg")) {
+                        frames.push(entry.path().to_string_lossy().to_string());
+                    }
+                }
+            }
+            if !frames.is_empty() {
+                frames.sort();
+                info!("SVD generated {} PNG frame files, combining into MP4 via ffmpeg", frames.len());
+
+                let glob_pattern = format!("{}/{}*.png", output_dir.to_string_lossy(), stem);
+
+                let ffmpeg_result = std::process::Command::new("ffmpeg")
+                    .arg("-y")
+                    .arg("-framerate").arg(params.fps.to_string())
+                    .arg("-pattern_type").arg("glob")
+                    .arg("-i").arg(&glob_pattern)
+                    .arg("-c:v").arg("libx264")
+                    .arg("-pix_fmt").arg("yuv420p")
+                    .arg("-r").arg(params.fps.to_string())
+                    .arg(output_path)
+                    .output();
+
+                let ffmpeg_ok = match &ffmpeg_result {
+                    Ok(out) if out.status.success() => {
+                        info!("ffmpeg combined {} frames into MP4: {}", frames.len(), output_path);
+                        true
+                    }
+                    Ok(out) => {
+                        let stderr = String::from_utf8_lossy(&out.stderr);
+                        warn!("ffmpeg failed (exit={:?}): {}", out.status.code(), stderr.lines().next().unwrap_or(""));
+                        false
+                    }
+                    Err(e) => {
+                        warn!("ffmpeg not found: {}", e);
+                        false
+                    }
+                };
+
+                // 清理帧文件
+                for f in &frames {
+                    let _ = std::fs::remove_file(f);
+                }
+
+                if ffmpeg_ok && std::path::Path::new(output_path).exists() {
+                    let video_data = std::fs::read(output_path).map_err(|e| {
+                        SdError::IoError(std::io::Error::new(
+                            std::io::ErrorKind::NotFound,
+                            format!("Failed to read ffmpeg output '{}': {}", output_path, e),
+                        ))
+                    })?;
+                    let _ = std::fs::remove_file(output_path);
+                    return Ok(video_data);
+                }
+
+                return Err(SdError::ExecutionFailed(format!(
+                    "sd-cli output {} PNG frames but ffmpeg failed to combine them. Install ffmpeg to enable video output.",
+                    frames.len()
+                )));
+            }
+
+            return Err(SdError::IoError(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                format!("SVD output file not found: {}", output_path),
+            )));
+        }
+
+        let video_data = std::fs::read(output_path).map_err(|e| {
+            SdError::IoError(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                format!("Failed to read SVD output '{}': {}", output_path, e),
+            ))
+        })?;
+
+        // 清理输出临时文件
+        let _ = std::fs::remove_file(output_path);
+
+        Ok(video_data)
+    }
+
     /// 图生视频（SVD）
     pub async fn image_to_video(&self, params: I2VParams) -> Result<Vec<u8>, SdError> {
         let _permit = self.semaphore.acquire().await.map_err(|e| {
             SdError::ResourceLimitExceeded(format!("Failed to acquire semaphore: {}", e))
         })?;
 
-        // 将输入图像写入临时文件
-        let input_path = std::env::temp_dir().join(format!("svd_input_{}.png", uuid::Uuid::new_v4()));
-        std::fs::write(&input_path, &params.input_image).map_err(SdError::from)?;
-
-        // SVD 模式：通过进程协议发送 image_to_video 请求
-        let request = SdRequest {
-            mode: "image_to_video".to_string(),
-            prompt: params.prompt,
-            negative_prompt: params.negative_prompt,
-            width: params.width,
-            height: params.height,
-            steps: params.steps,
-            cfg: params.cfg,
-            sampler: "euler".to_string(),
-            seed: params.seed,
-            model_path: params.model_path,
-            input_image: Some(input_path.to_string_lossy().into_owned()),
-            controlnet: None,
-            denoise: None,
-            request_id: Some(uuid::Uuid::new_v4().to_string()),
-        };
-
-        let mut pm = self.process_manager.lock().await;
-        let response = pm.execute_request(&request)?;
-
-        // 清理临时文件
-        let _ = std::fs::remove_file(&input_path);
-
-        if !response.is_success() {
-            return Err(SdError::ExecutionFailed(
-                response.error.unwrap_or_else(|| "Unknown error".to_string())
-            ));
+        if self.uses_native_worker() {
+            let model_path = resolve_model_path(&params.model_path, &self.config.video_model_path)?;
+            validate_native_model_file(&model_path, "video diffusion model")?;
+            validate_native_video_assets(&self.config, &model_path)?;
+            let input_path =
+                write_temporary_input_png("media_sd_input", &params.input_image)?;
+            let output_path = format!("/tmp/media_sd_{}.mp4", uuid::Uuid::new_v4());
+            let (generation_width, generation_height) = if is_svd_model_path(&model_path) {
+                (self.config.svd_native_width, self.config.svd_native_height)
+            } else {
+                semantic_video_dimensions(&self.config, params.width, params.height)
+            };
+            let mut request = self.native_request(
+                SdWorkerOperation::ImageToVideo,
+                model_path,
+                params.prompt,
+                params.negative_prompt,
+                generation_width,
+                generation_height,
+                params.steps,
+                params.cfg,
+                "euler",
+                1.0,
+                params.seed as i64,
+                params.frames,
+                params.fps,
+                Some(input_path),
+                output_path,
+            );
+            request.output_width = params.width as u32;
+            request.output_height = params.height as u32;
+            request.motion_bucket_id = params.motion_bucket_id;
+            request.min_cfg = params.min_cfg;
+            request.noise_aug_strength = params.noise_aug_strength;
+            return self.run_native_worker(request).await;
         }
 
-        let video_data = std::fs::read(&response.output_path)?;
-        Ok(video_data)
+        self.run_sd_cli_image_to_video(&params).await
     }
 
     /// 启动后端
@@ -1072,6 +2058,12 @@ impl StableDiffusionCppBackend {
     }
 
     pub async fn health_check(&self) -> Result<bool, SdError> {
+        if self.uses_native_worker() {
+            return Ok(
+                std::path::Path::new(&self.config.worker_path).is_file()
+                    && std::path::Path::new(&self.config.bridge_library_path).is_file()
+            );
+        }
         if self.config.executable_path.is_empty() {
             return Ok(false);
         }
@@ -1101,36 +2093,139 @@ impl StableDiffusionCppBackend {
     }
 }
 
-/// 简单的base64编码（避免引入额外依赖）
-fn base64_encode(data: &[u8]) -> String {
-    const CHARS: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+fn validate_native_model_file(path: &str, role: &str) -> Result<(), SdError> {
+    let info = crate::native_runtime::inspect_model_file(path)
+        .map_err(|error| SdError::ConfigurationError(format!("{}: {}", role, error)))?;
+    match info.container {
+        crate::native_runtime::ModelContainer::Safetensors
+        | crate::native_runtime::ModelContainer::Gguf => Ok(()),
+        crate::native_runtime::ModelContainer::TorchZip => Err(SdError::ConfigurationError(
+            format!(
+                "{} '{}' is a PyTorch ZIP archive renamed as a model file; native inference requires Safetensors or GGUF",
+                role, path
+            ),
+        )),
+        crate::native_runtime::ModelContainer::Unknown => Err(SdError::ConfigurationError(
+            format!("{} '{}' has an unsupported or corrupt container", role, path),
+        )),
+    }
+}
 
-    let mut result = String::with_capacity((data.len() + 2) / 3 * 4);
+fn normalize_native_sampler(value: &str) -> (String, String) {
+    let normalized = value.trim().to_ascii_lowercase();
+    let scheduler = if normalized.contains("karras") {
+        "karras"
+    } else {
+        "discrete"
+    };
+    let sampler = normalized
+        .trim_end_matches("_karras")
+        .trim_end_matches(" karras")
+        .replace("dpmpp", "dpm++");
+    (sampler, scheduler.to_string())
+}
 
-    for chunk in data.chunks(3) {
-        let b0 = chunk[0] as u32;
-        let b1 = if chunk.len() > 1 { chunk[1] as u32 } else { 0 };
-        let b2 = if chunk.len() > 2 { chunk[2] as u32 } else { 0 };
+fn is_svd_model_path(path: &str) -> bool {
+    let path = path.to_ascii_lowercase();
+    path.contains("svd") || path.contains("stable-video-diffusion")
+}
 
-        let triple = (b0 << 16) | (b1 << 8) | b2;
+fn is_gguf_path(path: &str) -> bool {
+    std::path::Path::new(path)
+        .extension()
+        .and_then(|value| value.to_str())
+        .is_some_and(|value| value.eq_ignore_ascii_case("gguf"))
+}
 
-        result.push(CHARS[((triple >> 18) & 0x3F) as usize] as char);
-        result.push(CHARS[((triple >> 12) & 0x3F) as usize] as char);
-
-        if chunk.len() > 1 {
-            result.push(CHARS[((triple >> 6) & 0x3F) as usize] as char);
-        } else {
-            result.push('=');
+fn validate_native_video_assets(config: &SdCppConfig, model_path: &str) -> Result<(), SdError> {
+    if is_svd_model_path(model_path) {
+        if config.clip_vision_path.trim().is_empty() {
+            return Err(SdError::ConfigurationError(
+                "SVD image-to-video requires sd_cpp.clip_vision_path".to_string(),
+            ));
         }
-
-        if chunk.len() > 2 {
-            result.push(CHARS[(triple & 0x3F) as usize] as char);
-        } else {
-            result.push('=');
-        }
+        return validate_native_model_file(&config.clip_vision_path, "CLIP Vision model");
     }
 
-    result
+    if config.video_t5xxl_path.trim().is_empty() {
+        return Err(SdError::ConfigurationError(
+            "prompt-conditioned video requires sd_cpp.video_t5xxl_path".to_string(),
+        ));
+    }
+    if config.video_vae_path.trim().is_empty() {
+        return Err(SdError::ConfigurationError(
+            "prompt-conditioned video requires sd_cpp.video_vae_path".to_string(),
+        ));
+    }
+    validate_native_model_file(&config.video_t5xxl_path, "video T5 text encoder")?;
+    validate_native_model_file(&config.video_vae_path, "video VAE")?;
+    if !config.video_high_noise_model_path.trim().is_empty() {
+        validate_native_model_file(
+            &config.video_high_noise_model_path,
+            "high-noise video diffusion model",
+        )?;
+    }
+    Ok(())
+}
+
+fn write_temporary_input_png(prefix: &str, bytes: &[u8]) -> Result<String, SdError> {
+    let decoded = image::load_from_memory(bytes).map_err(|error| {
+        SdError::ExecutionFailed(format!("cannot decode input image bytes: {}", error))
+    })?;
+    let path = std::env::temp_dir().join(format!("{}_{}.png", prefix, uuid::Uuid::new_v4()));
+    decoded
+        .to_rgb8()
+        .save_with_format(&path, image::ImageFormat::Png)
+        .map_err(|error| {
+            SdError::IoError(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                format!("cannot encode temporary PNG '{}': {}", path.display(), error),
+            ))
+        })?;
+    Ok(path.to_string_lossy().into_owned())
+}
+
+fn semantic_video_dimensions(
+    config: &SdCppConfig,
+    delivery_width: usize,
+    delivery_height: usize,
+) -> (usize, usize) {
+    let base_area = config
+        .semantic_video_native_width
+        .saturating_mul(config.semantic_video_native_height)
+        .max(256 * 256) as f64;
+    let aspect = delivery_width.max(1) as f64 / delivery_height.max(1) as f64;
+    let width = (base_area * aspect).sqrt();
+    let height = base_area / width;
+    (align_video_dimension(width), align_video_dimension(height))
+}
+
+fn align_video_dimension(value: f64) -> usize {
+    (((value / 16.0).round() as usize).max(16) * 16).clamp(256, 1280)
+}
+
+fn resolve_model_path(requested: &str, configured: &str) -> Result<String, SdError> {
+    let value = if requested.trim().is_empty() {
+        configured
+    } else {
+        requested
+    };
+    if value.trim().is_empty() {
+        return Err(SdError::ConfigurationError(
+            "model path is not configured".to_string(),
+        ));
+    }
+    if std::path::Path::new(value).is_file() {
+        return Ok(value.to_string());
+    }
+    let candidate = std::path::Path::new("models/checkpoints").join(value);
+    if candidate.is_file() {
+        return Ok(candidate.to_string_lossy().into_owned());
+    }
+    Err(SdError::ConfigurationError(format!(
+        "model file not found: {}",
+        value
+    )))
 }
 
 #[cfg(test)]
@@ -1145,6 +2240,7 @@ mod tests {
         assert!(config.flash_attention);
         assert_eq!(config.rng_mode, "cpu");
         assert_eq!(config.timeout_secs, 300);
+        assert_eq!(config.video_timeout_secs, 1800);
         assert_eq!(config.max_retries, 3);
     }
 
@@ -1203,18 +2299,204 @@ mod tests {
     }
 
     #[test]
-    fn test_base64_encode() {
-        // 测试空数据
-        assert_eq!(base64_encode(b""), "");
+    fn test_normalize_native_sampler() {
+        assert_eq!(
+            normalize_native_sampler("dpmpp2m_karras"),
+            ("dpm++2m".to_string(), "karras".to_string())
+        );
+        assert_eq!(
+            normalize_native_sampler("euler"),
+            ("euler".to_string(), "discrete".to_string())
+        );
+    }
 
-        // 测试 "Hello"
-        assert_eq!(base64_encode(b"Hello"), "SGVsbG8=");
+    #[test]
+    fn test_svd_model_detection() {
+        assert!(is_svd_model_path("models/checkpoints/svd_xt.safetensors"));
+        assert!(is_svd_model_path(
+            "models/diffusers/stable-video-diffusion-img2vid-xt/model.safetensors"
+        ));
+        assert!(!is_svd_model_path("models/checkpoints/sdxl_base.safetensors"));
+    }
 
-        // 测试 "Hel"
-        assert_eq!(base64_encode(b"Hel"), "SGVs");
+    #[test]
+    fn semantic_video_dimensions_preserve_delivery_orientation() {
+        let config = SdCppConfig::default();
+        assert_eq!(semantic_video_dimensions(&config, 1366, 780), (832, 480));
+        assert_eq!(semantic_video_dimensions(&config, 400, 500), (560, 704));
+    }
 
-        // 测试 "He"
-        assert_eq!(base64_encode(b"He"), "SGU=");
+    #[test]
+    fn image_gguf_request_preserves_quantization_and_uses_image_assets() {
+        let config = SdCppConfig {
+            image_vae_path: "/models/sdxl_vae.safetensors".to_string(),
+            image_max_vram: "-1".to_string(),
+            ..Default::default()
+        };
+        let backend = StableDiffusionCppBackend::new(config);
+        let request = backend.native_request(
+            SdWorkerOperation::TextToImage,
+            "/models/sdxl_base_1.0_Q4_K_S.gguf".to_string(),
+            "a cat".to_string(),
+            String::new(),
+            768,
+            768,
+            26,
+            6.0,
+            "dpm++2m_karras",
+            1.0,
+            42,
+            0,
+            0,
+            None,
+            "/tmp/out.png".to_string(),
+        );
+        assert_eq!(request.vae_path, "/models/sdxl_vae.safetensors");
+        assert_eq!(request.max_vram, "-1");
+        assert!(request.weight_type.is_empty(), "GGUF must preserve tensor types");
+    }
+
+    #[test]
+    fn image_request_passes_loras_and_hires() {
+        let config = SdCppConfig::default();
+        let backend = StableDiffusionCppBackend::new(config);
+        let mut request = backend.native_request(
+            SdWorkerOperation::TextToImage,
+            "/models/sd15.safetensors".to_string(),
+            "a cat".to_string(),
+            String::new(),
+            512,
+            512,
+            20,
+            7.0,
+            "dpm++2m_karras",
+            1.0,
+            42,
+            0,
+            0,
+            None,
+            "/tmp/out.png".to_string(),
+        );
+        request.loras = vec![crate::backend::sd_worker_protocol::WorkerLora {
+            path: "/models/epic_realism.safetensors".to_string(),
+            multiplier: 0.7,
+        }];
+        request.hires = Some(crate::backend::sd_worker_protocol::WorkerHires {
+            scale: 1.5,
+            steps: 16,
+            denoising_strength: 0.34,
+        });
+        let serialized = serde_json::to_string(&request).unwrap();
+        assert!(serialized.contains("epic_realism"));
+        assert!(serialized.contains("\"scale\":1.5"));
+        let parsed: crate::backend::sd_worker_protocol::SdWorkerRequest =
+            serde_json::from_str(&serialized).unwrap();
+        assert_eq!(parsed.loras.len(), 1);
+        assert_eq!(parsed.loras[0].multiplier, 0.7);
+        let hires = parsed.hires.unwrap();
+        assert_eq!(hires.scale, 1.5);
+        assert_eq!(hires.steps, 16);
+    }
+
+    #[test]
+    fn wan_worker_request_uses_standalone_native_assets() {
+        let config = SdCppConfig {
+            video_t5xxl_path: "/models/umt5.gguf".to_string(),
+            video_vae_path: "/models/wan.vae.safetensors".to_string(),
+            video_flow_shift: 3.0,
+            ..Default::default()
+        };
+        let backend = StableDiffusionCppBackend::new(config);
+        let request = backend.native_request(
+            SdWorkerOperation::TextToVideo,
+            "/models/wan.gguf".to_string(),
+            "a dancer".to_string(),
+            String::new(),
+            832,
+            480,
+            20,
+            6.0,
+            "euler",
+            1.0,
+            42,
+            25,
+            5,
+            None,
+            "/tmp/wan.mp4".to_string(),
+        );
+        assert!(request.model_path.is_empty());
+        assert_eq!(request.diffusion_model_path, "/models/wan.gguf");
+        assert_eq!(request.t5xxl_path, "/models/umt5.gguf");
+        assert_eq!(request.vae_path, "/models/wan.vae.safetensors");
+        assert!(request.weight_type.is_empty());
+        assert!(request.scheduler.is_empty());
+        assert_eq!(request.flow_shift, 3.0);
+    }
+
+    #[test]
+    fn temporary_input_normalizes_jpeg_bytes_to_png() {
+        let image = image::DynamicImage::ImageRgb8(image::RgbImage::from_pixel(
+            4,
+            3,
+            image::Rgb([12, 34, 56]),
+        ));
+        let mut jpeg = std::io::Cursor::new(Vec::new());
+        image
+            .write_to(&mut jpeg, image::ImageFormat::Jpeg)
+            .unwrap();
+
+        let path = write_temporary_input_png("media-agent-test", jpeg.get_ref()).unwrap();
+        let encoded = std::fs::read(&path).unwrap();
+        assert_eq!(image::guess_format(&encoded).unwrap(), image::ImageFormat::Png);
+        assert_eq!(image::image_dimensions(&path).unwrap(), (4, 3));
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn temporary_input_rejects_invalid_image_bytes() {
+        let error = write_temporary_input_png("media-agent-test", b"not an image").unwrap_err();
+        assert!(error.to_string().contains("cannot decode input image bytes"));
+    }
+
+    #[test]
+    fn test_build_backend_attempts_adds_cpu_fallback() {
+        let attempts = build_backend_attempts("cuda", "auto");
+        assert_eq!(attempts.len(), 2);
+        assert_eq!(attempts[0].backend, "cuda");
+        assert_eq!(attempts[0].rng_mode, "cuda");
+        assert_eq!(attempts[1].backend, "cpu");
+        assert_eq!(attempts[1].rng_mode, "cpu");
+    }
+
+    #[test]
+    fn test_build_backend_attempts_keeps_cpu_only() {
+        let attempts = build_backend_attempts("cpu", "cpu");
+        assert_eq!(attempts, vec![BackendAttempt {
+            backend: "cpu".to_string(),
+            rng_mode: "cpu".to_string(),
+        }]);
+    }
+
+    #[test]
+    fn test_should_retry_with_cpu_detects_cuda_runtime_errors() {
+        assert!(should_retry_with_cpu(
+            "ggml_cuda_init: failed to initialize CUDA: CUDA driver version is insufficient for CUDA runtime version"
+        ));
+        assert!(should_retry_with_cpu(
+            "backend config failed: backend 'cuda' was not found"
+        ));
+        assert!(!should_retry_with_cpu("failed to parse torch zip pickle metadata"));
+    }
+
+    #[test]
+    fn test_summarize_process_output_prefers_multiline_detail() {
+        let summary = summarize_process_output(
+            b"line 1\nline 2\n",
+            b"stdout line\n",
+        );
+        assert!(summary.contains("line 1"));
+        assert!(summary.contains("line 2"));
+        assert!(summary.contains("stdout line"));
     }
 
     #[test]

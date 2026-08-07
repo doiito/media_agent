@@ -1,0 +1,39 @@
+diff --git a/src/core/ggml_extend.hpp b/src/core/ggml_extend.hpp
+index d561d74..0224d75 100644
+--- a/src/core/ggml_extend.hpp
++++ b/src/core/ggml_extend.hpp
+@@ -3368,11 +3368,31 @@ public:
+                 b = ctx->weight_adapter->patch_weight(ctx->ggml_ctx, ctx->backend, b, prefix + "bias");
+             }
+         }
+-        return ggml_ext_conv_3d(ctx->ggml_ctx, x, w, b, in_channels,
+-                                std::get<2>(stride), std::get<1>(stride), std::get<0>(stride),
+-                                std::get<2>(padding), std::get<1>(padding), std::get<0>(padding),
+-                                std::get<2>(dilation), std::get<1>(dilation), std::get<0>(dilation),
+-                                force_prec_f32);
++        const bool explicit_channel_axis = w->ne[0] == 1 &&
++                                           w->ne[1] == 1 &&
++                                           x->ne[2] == in_channels &&
++                                           x->ne[3] > 0 &&
++                                           x->ne[3] < in_channels;
++        if (explicit_channel_axis) {
++            const int64_t spatial = x->ne[0];
++            const int64_t depth   = x->ne[1];
++            const int64_t batch   = x->ne[3];
++            x = ggml_cont(ctx->ggml_ctx, x);
++            x = ggml_reshape_4d(ctx->ggml_ctx, x, spatial, 1, depth, in_channels * batch);
++            x = ggml_ext_conv_3d(ctx->ggml_ctx, x, w, b, in_channels,
++                                 std::get<2>(stride), std::get<1>(stride), std::get<0>(stride),
++                                 std::get<2>(padding), std::get<1>(padding), std::get<0>(padding),
++                                 std::get<2>(dilation), std::get<1>(dilation), std::get<0>(dilation),
++                                 force_prec_f32);
++            return ggml_reshape_4d(ctx->ggml_ctx, x, x->ne[0], x->ne[2], out_channels, batch);
++        }
++
++        return ggml_ext_conv_3d(ctx->ggml_ctx, x, w, b, in_channels,
++                                std::get<2>(stride), std::get<1>(stride), std::get<0>(stride),
++                                std::get<2>(padding), std::get<1>(padding), std::get<0>(padding),
++                                std::get<2>(dilation), std::get<1>(dilation), std::get<0>(dilation),
++                                force_prec_f32);
+     }
+ };

@@ -4,6 +4,7 @@
 use crate::api::dto::*;
 use crate::types::*;
 use crate::execution::ExecutionEngine;
+use crate::execution::EventBus;
 use crate::backend::BackendRouter;
 use crate::node::registry::NodeRegistry;
 use crate::monitor::Monitor;
@@ -23,6 +24,7 @@ use std::time::Instant;
 #[derive(Clone)]
 pub struct ApiState {
     pub engine: Arc<Mutex<ExecutionEngine>>,
+    pub event_bus: EventBus,
     pub backend_router: Arc<BackendRouter>,
     pub node_registry: Arc<Mutex<NodeRegistry>>,
     pub start_time: Instant,
@@ -91,6 +93,15 @@ pub async fn health_check(State(state): State<ApiState>) -> impl IntoResponse {
     };
 
     (StatusCode::OK, Json(response))
+}
+
+/// GET /runtime/preflight - 检查零 Python 原生运行时、模型容器和本地依赖。
+pub async fn native_runtime_preflight(State(state): State<ApiState>) -> impl IntoResponse {
+    let agent = state.agent.lock().await;
+    let report = crate::native_runtime::NativeRuntimeReport::inspect(
+        &agent.context().app_config,
+    );
+    (StatusCode::OK, Json(report))
 }
 
 /// GET /system_stats - 系统状态
@@ -476,18 +487,48 @@ pub async fn view_image(
     state.increment_requests().await;
 
     let base_dir = match query.view_type.as_str() {
-        "input" => "input",
-        "temp" => "temp",
-        _ => "output",
+        "input" => std::path::PathBuf::from("input"),
+        "temp" => std::path::PathBuf::from("temp"),
+        _ => std::path::PathBuf::from(&state.output_dir),
     };
 
-    let mut path = std::path::PathBuf::from(base_dir);
-    if !query.subfolder.is_empty() {
-        path.push(&query.subfolder);
+    let requested = std::path::Path::new(&query.subfolder).join(&query.filename);
+    if requested.is_absolute()
+        || requested.components().any(|component| {
+            !matches!(component, std::path::Component::Normal(_))
+        })
+    {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse::new("Invalid media path", "INVALID_PATH")),
+        ));
     }
-    path.push(&query.filename);
 
-    if !path.exists() {
+    let canonical_base = std::fs::canonicalize(&base_dir).map_err(|error| (
+        StatusCode::INTERNAL_SERVER_ERROR,
+        Json(ErrorResponse::new("Media directory is unavailable", "READ_ERROR")
+            .with_details(error.to_string())),
+    ))?;
+    let path = match std::fs::canonicalize(base_dir.join(requested)) {
+        Ok(path) if path.starts_with(&canonical_base) => path,
+        Ok(_) => {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                Json(ErrorResponse::new("Invalid media path", "INVALID_PATH")),
+            ));
+        }
+        Err(_) => {
+            return Err((
+                StatusCode::NOT_FOUND,
+                Json(ErrorResponse::new(
+                    format!("Image '{}' not found", query.filename),
+                    "FILE_NOT_FOUND",
+                )),
+            ));
+        }
+    };
+
+    if !path.is_file() {
         return Err((
             StatusCode::NOT_FOUND,
             Json(ErrorResponse::new(
@@ -512,6 +553,8 @@ pub async fn view_image(
             "jpg" | "jpeg" => "image/jpeg",
             "webp" => "image/webp",
             "gif" => "image/gif",
+            "mp4" => "video/mp4",
+            "webm" => "video/webm",
             _ => "application/octet-stream",
         })
         .unwrap_or("application/octet-stream");
@@ -531,7 +574,6 @@ pub async fn upload_image(
     state.increment_requests().await;
 
     let mut image_data: Option<Vec<u8>> = None;
-    let mut filename = "uploaded.png".to_string();
     let mut subfolder = String::new();
 
     while let Some(field) = multipart.next_field().await.map_err(|e| {
@@ -545,7 +587,6 @@ pub async fn upload_image(
 
         match name.as_str() {
             "image" => {
-                filename = field.file_name().unwrap_or("uploaded.png").to_string();
                 let data = field.bytes().await.map_err(|e| {
                     (
                         StatusCode::BAD_REQUEST,
@@ -575,12 +616,39 @@ pub async fn upload_image(
             Json(ErrorResponse::new("No image provided", "NO_IMAGE")),
         )
     })?;
-
-    // 创建上传目录
-    let mut upload_dir = std::path::PathBuf::from("input");
-    if !subfolder.is_empty() {
-        upload_dir.push(&subfolder);
+    if image_data.len() > MAX_UPLOAD_BYTES {
+        return Err((
+            StatusCode::PAYLOAD_TOO_LARGE,
+            Json(ErrorResponse::new("Image exceeds the 10 MiB upload limit", "UPLOAD_TOO_LARGE")),
+        ));
     }
+    let extension = validate_uploaded_image(&image_data).map_err(|error| (
+        StatusCode::UNSUPPORTED_MEDIA_TYPE,
+        Json(ErrorResponse::new("Uploaded file is not a supported image", "INVALID_IMAGE")
+            .with_details(error)),
+    ))?;
+    let safe_subfolder = validate_upload_subfolder(&subfolder).map_err(|error| (
+        StatusCode::BAD_REQUEST,
+        Json(ErrorResponse::new("Invalid upload subfolder", "INVALID_PATH")
+            .with_details(error)),
+    ))?;
+
+    let input_dir = std::path::PathBuf::from("input");
+    std::fs::create_dir_all(&input_dir).map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse::new("Failed to create input directory", "DIR_ERROR")
+                .with_details(e.to_string())),
+        )
+    })?;
+    let canonical_input = std::fs::canonicalize(&input_dir).map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse::new("Input directory is unavailable", "DIR_ERROR")
+                .with_details(e.to_string())),
+        )
+    })?;
+    let upload_dir = input_dir.join(&safe_subfolder);
     std::fs::create_dir_all(&upload_dir).map_err(|e| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -588,9 +656,34 @@ pub async fn upload_image(
                 .with_details(e.to_string())),
         )
     })?;
+    let canonical_upload = std::fs::canonicalize(&upload_dir).map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse::new("Upload directory is unavailable", "DIR_ERROR")
+                .with_details(e.to_string())),
+        )
+    })?;
+    if !canonical_upload.starts_with(&canonical_input) {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse::new("Invalid upload subfolder", "INVALID_PATH")),
+        ));
+    }
 
+    let filename = format!("upload_{}.{}", uuid::Uuid::new_v4(), extension);
     let file_path = upload_dir.join(&filename);
-    std::fs::write(&file_path, &image_data).map_err(|e| {
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&file_path)
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse::new("Failed to create image", "SAVE_ERROR")
+                    .with_details(e.to_string())),
+            )
+        })?;
+    std::io::Write::write_all(&mut file, &image_data).map_err(|e| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(ErrorResponse::new("Failed to save image", "SAVE_ERROR")
@@ -610,6 +703,45 @@ pub async fn upload_image(
 // ============================================================================
 // 辅助函数
 // ============================================================================
+
+const MAX_UPLOAD_BYTES: usize = 10 * 1024 * 1024;
+const MAX_UPLOAD_DIMENSION: u32 = 8192;
+const MAX_UPLOAD_DECODE_BYTES: u64 = 256 * 1024 * 1024;
+
+fn validate_upload_subfolder(value: &str) -> Result<std::path::PathBuf, String> {
+    let path = std::path::Path::new(value);
+    if path.is_absolute()
+        || path.components().any(|component| {
+            !matches!(component, std::path::Component::Normal(_))
+        })
+    {
+        return Err("subfolder must contain only relative path components".to_string());
+    }
+    Ok(path.to_path_buf())
+}
+
+fn validate_uploaded_image(data: &[u8]) -> Result<&'static str, String> {
+    let cursor = std::io::Cursor::new(data);
+    let mut reader = image::ImageReader::new(cursor)
+        .with_guessed_format()
+        .map_err(|error| format!("cannot detect image format: {}", error))?;
+    let extension = match reader.format() {
+        Some(image::ImageFormat::Png) => "png",
+        Some(image::ImageFormat::Jpeg) => "jpg",
+        Some(image::ImageFormat::WebP) => "webp",
+        Some(format) => return Err(format!("unsupported image format: {:?}", format)),
+        None => return Err("unknown image format".to_string()),
+    };
+    let mut limits = image::Limits::default();
+    limits.max_image_width = Some(MAX_UPLOAD_DIMENSION);
+    limits.max_image_height = Some(MAX_UPLOAD_DIMENSION);
+    limits.max_alloc = Some(MAX_UPLOAD_DECODE_BYTES);
+    reader.limits(limits);
+    reader
+        .decode()
+        .map_err(|error| format!("cannot decode image safely: {}", error))?;
+    Ok(extension)
+}
 
 /// 获取系统总内存（字节）
 /// Linux: 读取 /proc/meminfo
@@ -743,4 +875,29 @@ pub async fn monitor_processes(State(state): State<ApiState>) -> impl IntoRespon
     let processes = state.monitor.related_processes().await;
     Json(serde_json::json!({ "processes": processes, "count": processes.len() }))
         .into_response()
+}
+
+#[cfg(test)]
+mod upload_security_tests {
+    use super::*;
+
+    #[test]
+    fn upload_subfolder_rejects_path_traversal_and_absolute_paths() {
+        assert!(validate_upload_subfolder("../../etc").is_err());
+        assert!(validate_upload_subfolder("/tmp/outside").is_err());
+        assert!(validate_upload_subfolder("safe/session").is_ok());
+        assert!(validate_upload_subfolder("").is_ok());
+    }
+
+    #[test]
+    fn uploaded_image_validation_checks_real_content() {
+        let image = image::RgbImage::from_pixel(2, 2, image::Rgb([12, 34, 56]));
+        let mut cursor = std::io::Cursor::new(Vec::new());
+        image::DynamicImage::ImageRgb8(image)
+            .write_to(&mut cursor, image::ImageFormat::Png)
+            .unwrap();
+
+        assert_eq!(validate_uploaded_image(cursor.get_ref()).unwrap(), "png");
+        assert!(validate_uploaded_image(b"not an image").is_err());
+    }
 }

@@ -1,0 +1,17 @@
+diff --git a/src/stable-diffusion.cpp b/src/stable-diffusion.cpp
+index 1f4dd95..90ec104 100644
+--- a/src/stable-diffusion.cpp
++++ b/src/stable-diffusion.cpp
+@@ -1683,6 +1683,12 @@ public:
+             return {sefi_denoiser->sem_timesteps[sched_idx],
+                     sefi_denoiser->tex_timesteps[sched_idx]};
+         }
++        if (version == VERSION_SVD) {
++            if (timesteps.empty() || init_latent.dim() < 4) {
++                return timesteps;
++            }
++            return std::vector<float>(static_cast<size_t>(init_latent.shape()[3]), timesteps[0]);
++        }
+         if (diffusion_model->get_desc() == "Wan2.2-TI2V-5B") {
+             int64_t frame_count = init_latent.shape()[2];
+             auto new_timesteps  = std::vector<float>(static_cast<size_t>(frame_count), timesteps[0]);

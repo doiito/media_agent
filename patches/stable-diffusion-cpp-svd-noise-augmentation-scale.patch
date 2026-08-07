@@ -1,0 +1,13 @@
+diff --git a/src/stable-diffusion.cpp b/src/stable-diffusion.cpp
+--- a/src/stable-diffusion.cpp
++++ b/src/stable-diffusion.cpp
+@@ -5002,7 +5002,9 @@ static std::optional<ImageGenerationLatents> prepare_video_generation_latents(sd
+         if (request->noise_aug_strength > 0.f) {
+             vae_conditioning_image += sd::Tensor<float>::randn_like(vae_conditioning_image,
+-                                                                    sd_ctx->sd->rng) * request->noise_aug_strength;
++                                                                    sd_ctx->sd->rng) *
++                                       (0.5f * request->noise_aug_strength);
++            // VAE::encode maps [0, 1] to [-1, 1], doubling this input-space noise.
+         }
+         latents.concat_latent = sd_ctx->sd->encode_svd_conditioning_latent(vae_conditioning_image);
+         if (latents.concat_latent.empty()) {

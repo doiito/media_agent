@@ -337,11 +337,13 @@ impl WorkflowValidator {
                     ("images".to_string(), DataType::IMAGE),
                     ("frame_rate".to_string(), DataType::INT),
                     ("format".to_string(), DataType::STRING),
-                    ("codec".to_string(), DataType::FLOAT),
+                    ("codec".to_string(), DataType::STRING),
                     ("quality".to_string(), DataType::FLOAT),
                     ("filename_prefix".to_string(), DataType::STRING),
                 ]),
-                output_types: HashMap::new(),
+                output_types: HashMap::from([
+                    ("filename".to_string(), DataType::STRING),
+                ]),
                 required_inputs: HashSet::new(),
             },
         );
@@ -354,6 +356,10 @@ impl WorkflowValidator {
                 input_types: HashMap::from([
                     ("model".to_string(), DataType::MODEL),
                     ("image".to_string(), DataType::IMAGE),
+                    ("prompt".to_string(), DataType::STRING),
+                    ("negative_prompt".to_string(), DataType::STRING),
+                    ("width".to_string(), DataType::INT),
+                    ("height".to_string(), DataType::INT),
                     ("frames".to_string(), DataType::INT),
                     ("fps".to_string(), DataType::INT),
                     ("motion_bucket_id".to_string(), DataType::INT),

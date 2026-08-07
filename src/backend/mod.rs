@@ -4,6 +4,7 @@ pub mod sd_cpp;
 pub mod llama_cpp;
 pub mod router;
 pub mod multi_backend;
+pub mod sd_worker_protocol;
 
 pub use router::BackendRouter;
 pub use sd_cpp::{
@@ -41,6 +42,10 @@ pub struct T2IParams {
     pub sampler: String,
     pub seed: usize,
     pub model_path: String,
+    /// 附加 LoRA(如低显存档位的写实增强)。空列表不启用。
+    pub loras: Vec<LoraSpec>,
+    /// 原生 hires-fix(latent upscale,零外部模型依赖)。None 不启用。
+    pub hires: Option<HiresSpec>,
 }
 
 impl Default for T2IParams {
@@ -55,6 +60,8 @@ impl Default for T2IParams {
             sampler: "dpm++2m_karras".to_string(),
             seed: 0,
             model_path: String::new(),
+            loras: Vec::new(),
+            hires: None,
         }
     }
 }
@@ -73,6 +80,8 @@ pub struct I2IParams {
     pub height: usize,
     pub seed: usize,
     pub model_path: String,
+    /// 附加 LoRA。空列表不启用。
+    pub loras: Vec<LoraSpec>,
 }
 
 impl Default for I2IParams {
@@ -89,8 +98,24 @@ impl Default for I2IParams {
             height: 512,
             seed: 0,
             model_path: String::new(),
+            loras: Vec::new(),
         }
     }
+}
+
+/// LoRA 规格:模型路径 + 应用权重。
+#[derive(Debug, Clone, PartialEq)]
+pub struct LoraSpec {
+    pub path: String,
+    pub multiplier: f32,
+}
+
+/// 原生 hires-fix 规格(scale + 第二段采样参数)。
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct HiresSpec {
+    pub scale: f32,
+    pub steps: u32,
+    pub denoising_strength: f32,
 }
 
 /// 文生视频参数
@@ -102,8 +127,11 @@ pub struct T2VParams {
     pub height: usize,
     pub frames: usize,
     pub fps: usize,
+    pub motion_bucket_id: i32,
     pub steps: usize,
     pub cfg: f32,
+    pub min_cfg: f32,
+    pub noise_aug_strength: f32,
     pub seed: usize,
     pub model_path: String,
 }
@@ -117,8 +145,11 @@ impl Default for T2VParams {
             height: 512,
             frames: 16,
             fps: 8,
+            motion_bucket_id: 127,
             steps: 20,
-            cfg: 7.0,
+            cfg: 3.0,
+            min_cfg: 1.0,
+            noise_aug_strength: 0.02,
             seed: 0,
             model_path: String::new(),
         }
@@ -139,6 +170,8 @@ pub struct I2VParams {
     pub motion_scale: f32,
     pub steps: usize,
     pub cfg: f32,
+    pub min_cfg: f32,
+    pub noise_aug_strength: f32,
     pub seed: usize,
     pub model_path: String,
 }
@@ -156,7 +189,9 @@ impl Default for I2VParams {
             motion_bucket_id: 127,
             motion_scale: 1024.0,
             steps: 25,
-            cfg: 2.5,
+            cfg: 3.0,
+            min_cfg: 1.0,
+            noise_aug_strength: 0.02,
             seed: 0,
             model_path: String::new(),
         }

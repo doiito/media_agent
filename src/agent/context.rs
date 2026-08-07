@@ -11,6 +11,33 @@ use crate::config::AppConfig;
 use crate::monitor::Monitor;
 use crate::agent::llm::LlmClient;
 
+/// Trusted request data supplied by the Web UI rather than inferred by the LLM.
+#[derive(Debug, Clone)]
+pub struct GenerationRequestContext {
+    pub user_request: String,
+    pub intent: String,
+    pub image_path: Option<String>,
+    pub params: serde_json::Value,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct GenerationAudit {
+    pub intent: String,
+    pub pipeline: String,
+    pub effective_prompt: String,
+    pub effective_negative_prompt: String,
+    pub quality: String,
+    pub seed: i64,
+    pub parameters: serde_json::Value,
+    pub output_path: String,
+    /// 启发式质量分(0..1)。None 表示未评分(如视频)。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub quality_score: Option<f32>,
+    /// 质量迭代次数(候选选优/失败重试)。
+    #[serde(default)]
+    pub iterations: u32,
+}
+
 /// Agent 依赖注入容器
 ///
 /// 持有两层组件：
@@ -33,6 +60,10 @@ pub struct AgentContext {
     pub monitor: Arc<Monitor>,
     /// 应用配置
     pub app_config: AppConfig,
+    /// Request-scoped UI constraints shared with native generation tools.
+    pub generation_request: Arc<tokio::sync::RwLock<Option<GenerationRequestContext>>>,
+    /// Effective native request recorded after prompt compilation and generation.
+    pub generation_audit: Arc<tokio::sync::RwLock<Option<GenerationAudit>>>,
 
     // === LLM 客户端（DeepSeek API）===
     /// LLM 客户端（从环境变量初始化）
@@ -70,6 +101,8 @@ impl AgentContext {
             event_bus,
             monitor,
             app_config,
+            generation_request: Arc::new(tokio::sync::RwLock::new(None)),
+            generation_audit: Arc::new(tokio::sync::RwLock::new(None)),
             // LLM 客户端初始化为空（通过 with_llm_client 设置）
             llm_client: None,
             // gliding_horse 组件初始化为空
@@ -135,6 +168,8 @@ impl Clone for AgentContext {
             event_bus: self.event_bus.clone(),
             monitor: self.monitor.clone(),
             app_config: self.app_config.clone(),
+            generation_request: self.generation_request.clone(),
+            generation_audit: self.generation_audit.clone(),
             llm_client: self.llm_client.clone(),
             gateway: self.gateway.clone(),
             l0_store: self.l0_store.clone(),

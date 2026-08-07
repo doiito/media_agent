@@ -1,0 +1,39 @@
+{
+  "cases": [
+    {
+      "id": "t2i-semantic-quality",
+      "message": "生成一张电影感的雨夜城市街道图片，午夜时分，红色和青色霓虹灯倒映在湿润路面上，画面清晰且细节丰富",
+      "params": {
+        "intent": "text_to_image",
+        "negative_prompt": "daytime, daylight, sunny, dry road, blurry, low detail, text, watermark",
+        "width": 512,
+        "height": 512,
+        "steps": 30,
+        "cfg": 7.0,
+        "seed": 42,
+        "quality": "high",
+        "_explicit_keys": [
+          "intent",
+          "negative_prompt",
+          "width",
+          "height",
+          "steps",
+          "cfg",
+          "seed",
+          "quality"
+        ]
+      },
+      "required_prompt_terms": [
+        "rain",
+        "night",
+        "city",
+        "street",
+        "red",
+        "cyan",
+        "neon",
+        "wet"
+      ],
+      "expected_success": true
+    }
+  ]
+}

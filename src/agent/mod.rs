@@ -11,6 +11,7 @@ pub mod skills;
 pub mod workflow;
 pub mod handlers;
 pub mod llm;
+pub mod quality;
 pub mod advanced_intelligence;
 pub mod workspace_monitor;
 

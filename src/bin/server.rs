@@ -43,6 +43,26 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         "  SD.cpp backend: {} ({})",
         config.sd_cpp.backend, config.sd_cpp.precision
     );
+    info!(
+        "  Agent LLM: {:?} ({})",
+        config.agent.llm.provider,
+        config.agent.llm.gateway_base_url()
+    );
+
+    let runtime_report = comfyui_rust_agent::native_runtime::NativeRuntimeReport::inspect(&config);
+    for check in &runtime_report.checks {
+        match check.status {
+            comfyui_rust_agent::native_runtime::RuntimeCheckStatus::Ready => {
+                info!("  Native runtime [{}]: {}", check.id, check.detail);
+            }
+            comfyui_rust_agent::native_runtime::RuntimeCheckStatus::Warning => {
+                warn!("  Native runtime [{}]: {}", check.id, check.detail);
+            }
+            comfyui_rust_agent::native_runtime::RuntimeCheckStatus::Error => {
+                error!("  Native runtime [{}]: {}", check.id, check.detail);
+            }
+        }
+    }
 
     // 创建后端路由器
     let backend_router = BackendRouter::with_configs(
@@ -60,6 +80,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     info!("Starting ComfyUI Rust Agent server");
     info!("API endpoints:");
     info!("  GET  /health             - 健康检查");
+    info!("  GET  /runtime/preflight  - 原生运行时预检");
     info!("  GET  /system_stats       - 系统状态");
     info!("  GET  /stats              - 服务器统计");
     info!("  POST /prompt             - 提交工作流");

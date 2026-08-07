@@ -96,7 +96,7 @@ fn batch_slerp(latent1: &[f32], latent2: &[f32], t: f32, channels: usize) -> Vec
 }
 
 // ============================================================================
-// SVDImageToVideo 节点 - 使用 SVD 进行图生视频
+// Native image-to-video node. The legacy class name keeps old workflows valid.
 // ============================================================================
 
 pub struct SVDImageToVideoNode {
@@ -116,14 +116,25 @@ impl SVDImageToVideoNode {
         }
     }
 
-    fn find_svd_model(name: &str) -> Option<String> {
-        let search_dirs = ["models/checkpoints", "models/svd", "models/video"];
+    fn find_video_model(name: &str) -> Option<String> {
+        // 1. 如果已经是有效完整路径，直接返回
+        if std::path::Path::new(name).exists() {
+            return Some(name.to_string());
+        }
+        // 2. 在已知搜索目录中查找
+        let search_dirs = [
+            "models/checkpoints",
+            "models/svd",
+            "models/video",
+            "models/diffusion_models",
+            "models/wan2.2-ti2v-5b",
+        ];
         for dir in &search_dirs {
             let path = std::path::Path::new(dir).join(name);
             if path.exists() {
                 return Some(path.to_string_lossy().into_owned());
             }
-            for ext in &["safetensors", "ckpt", "pt", "bin"] {
+            for ext in &["safetensors", "gguf"] {
                 let path_with_ext = std::path::Path::new(dir).join(format!("{}.{}", name, ext));
                 if path_with_ext.exists() {
                     return Some(path_with_ext.to_string_lossy().into_owned());
@@ -160,6 +171,18 @@ impl Node for SVDImageToVideoNode {
                 default: None,
                 choices: None,
             }),
+            ("prompt".to_string(), InputType {
+                data_type: DataType::STRING,
+                required: false,
+                default: Some(Value::String(String::new())),
+                choices: None,
+            }),
+            ("negative_prompt".to_string(), InputType {
+                data_type: DataType::STRING,
+                required: false,
+                default: Some(Value::String(String::new())),
+                choices: None,
+            }),
             ("positive".to_string(), InputType {
                 data_type: DataType::CONDITIONING,
                 required: false,
@@ -193,7 +216,19 @@ impl Node for SVDImageToVideoNode {
             ("cfg".to_string(), InputType {
                 data_type: DataType::FLOAT,
                 required: false,
-                default: Some(Value::Float(2.5)),
+                default: Some(Value::Float(3.0)),
+                choices: None,
+            }),
+            ("min_cfg".to_string(), InputType {
+                data_type: DataType::FLOAT,
+                required: false,
+                default: Some(Value::Float(1.0)),
+                choices: None,
+            }),
+            ("noise_aug_strength".to_string(), InputType {
+                data_type: DataType::FLOAT,
+                required: false,
+                default: Some(Value::Float(0.02)),
                 choices: None,
             }),
             ("steps".to_string(), InputType {
@@ -233,6 +268,14 @@ impl Node for SVDImageToVideoNode {
                 data_type: DataType::VAE,
                 name: "VAE".to_string(),
             }),
+            ("FRAMES".to_string(), OutputType {
+                data_type: DataType::VIDEO,
+                name: "FRAMES".to_string(),
+            }),
+            ("VIDEO".to_string(), OutputType {
+                data_type: DataType::STRING,
+                name: "VIDEO".to_string(),
+            }),
         ])
     }
 
@@ -242,6 +285,18 @@ impl Node for SVDImageToVideoNode {
             .as_ref_str()?;
         let image_value = inputs.get("image")
             .ok_or_else(|| Error::ExecutionFailed("Missing image".to_string()))?;
+        let prompt = inputs
+            .get("prompt")
+            .map(Value::as_ref_str)
+            .transpose()?
+            .unwrap_or_default()
+            .to_string();
+        let negative_prompt = inputs
+            .get("negative_prompt")
+            .map(Value::as_ref_str)
+            .transpose()?
+            .unwrap_or_default()
+            .to_string();
         let frames = inputs.get("frames")
             .unwrap_or(&Value::Int(14))
             .as_int()?;
@@ -252,7 +307,13 @@ impl Node for SVDImageToVideoNode {
             .unwrap_or(&Value::Int(127))
             .as_int()?;
         let cfg = inputs.get("cfg")
-            .unwrap_or(&Value::Float(2.5))
+            .unwrap_or(&Value::Float(3.0))
+            .as_float()?;
+        let min_cfg = inputs.get("min_cfg")
+            .unwrap_or(&Value::Float(1.0))
+            .as_float()?;
+        let noise_aug_strength = inputs.get("noise_aug_strength")
+            .unwrap_or(&Value::Float(0.02))
             .as_float()?;
         let steps = inputs.get("steps")
             .unwrap_or(&Value::Int(20))
@@ -267,7 +328,31 @@ impl Node for SVDImageToVideoNode {
             .unwrap_or(&Value::Int(576))
             .as_int()?;
 
-        let model_path = Self::find_svd_model(model).unwrap_or_else(|| model.to_string());
+        if !cfg.is_finite() || cfg <= 0.0 {
+            return Err(Error::ExecutionFailed(
+                "Video CFG must be a finite positive value".to_string(),
+            ));
+        }
+
+        let model_path = Self::find_video_model(model).unwrap_or_else(|| model.to_string());
+        let normalized_model = model_path.to_ascii_lowercase();
+        let is_svd = normalized_model.contains("svd")
+            || normalized_model.contains("stable-video-diffusion");
+        if is_svd
+            && (!min_cfg.is_finite() || min_cfg <= 0.0 || min_cfg > cfg)
+        {
+            return Err(Error::ExecutionFailed(
+                "SVD guidance requires 0 < min_cfg <= cfg".to_string(),
+            ));
+        }
+        if is_svd
+            && (!noise_aug_strength.is_finite()
+                || !(0.0..=1.0).contains(&noise_aug_strength))
+        {
+            return Err(Error::ExecutionFailed(
+                "SVD noise_aug_strength must be between 0 and 1".to_string(),
+            ));
+        }
 
         // 从输入提取图像字节数据
         let image_bytes = match image_value {
@@ -287,13 +372,13 @@ impl Node for SVDImageToVideoNode {
             )),
         };
 
-        info!("SVD Image-to-Video: model={}, frames={}, fps={}, motion={}, cfg={}, steps={}, seed={}, size={}x{}",
-              model_path, frames, fps, motion_bucket_id, cfg, steps, seed, width, height);
+        info!("Native Image-to-Video: model={}, frames={}, fps={}, motion={}, cfg={}..{}, steps={}, seed={}, size={}x{}",
+              model_path, frames, fps, motion_bucket_id, min_cfg, cfg, steps, seed, width, height);
 
         // 构建 I2V 参数并调用后端
         let params = crate::backend::I2VParams {
-            prompt: String::new(),
-            negative_prompt: String::new(),
+            prompt,
+            negative_prompt,
             input_image: image_bytes,
             width: width as usize,
             height: height as usize,
@@ -303,22 +388,43 @@ impl Node for SVDImageToVideoNode {
             motion_scale: 1024.0,
             steps: steps as usize,
             cfg: cfg as f32,
+            min_cfg: min_cfg as f32,
+            noise_aug_strength: noise_aug_strength as f32,
             seed: seed as usize,
             model_path: model_path.clone(),
         };
 
         match self.backend_router.image_to_video(params).await {
             Ok(video_data) => {
-                info!("SVD video generated: {} bytes", video_data.len());
+                info!("Native video generated: {} bytes", video_data.len());
+
+                // 直接保存视频文件到 output 目录
+                let output_dir = "output";
+                let _ = std::fs::create_dir_all(output_dir);
+                let timestamp = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_millis())
+                    .unwrap_or(0);
+                let filename = format!("native_video_{}.mp4", timestamp);
+                let output_path = std::path::Path::new(output_dir).join(&filename);
+
+                if let Err(e) = std::fs::write(&output_path, &video_data) {
+                    warn!("Failed to save video file: {}", e);
+                } else {
+                    info!("Video saved to: {}", output_path.display());
+                }
+
+                // 返回结果（使用 VIDEO 类型表示视频数据）
                 Ok(HashMap::from([
-                    ("LATENT".to_string(), Value::Video(video_data.clone())),
+                    ("LATENT".to_string(), Value::Latent(vec![])),
                     ("VAE".to_string(), Value::Vae(model_path.clone())),
-                    ("FRAMES".to_string(), Value::Video(video_data)),
+                    ("FRAMES".to_string(), Value::Video(video_data.clone())),
+                    ("VIDEO".to_string(), Value::String(filename)),
                 ]))
             }
             Err(e) => {
                 Err(Error::BackendError(format!(
-                    "SVD image_to_video failed: {}. Ensure SVD model '{}' exists and sd-cli supports video mode.",
+                    "Native image_to_video failed: {}. Verify video model '{}' and its configured text encoder/VAE assets.",
                     e, model_path
                 )))
             }

@@ -1042,7 +1042,7 @@ mod backend_types_tests {
         assert_eq!(p.height, 512);
         assert_eq!(p.steps, 20);
         assert!((p.cfg - 7.0).abs() < 0.001);
-        assert_eq!(p.sampler, "euler");
+        assert_eq!(p.sampler, "dpm++2m_karras");
         assert_eq!(p.seed, 0);
         assert!(p.prompt.is_empty());
         assert!(p.negative_prompt.is_empty());
@@ -1061,6 +1061,8 @@ mod backend_types_tests {
             sampler: "dpmpp_2m".to_string(),
             seed: 42,
             model_path: "/models/sd15.safetensors".to_string(),
+        loras: Vec::new(),
+            hires: None,
         };
         assert_eq!(p.prompt, "a cat");
         assert_eq!(p.seed, 42);
@@ -1125,6 +1127,7 @@ mod backend_types_tests {
             circuit_breaker_reset_secs: 120,
             extra_args: vec!["--verbose".to_string()],
             env_vars: std::collections::HashMap::new(),
+            ..SdCppConfig::default()
         };
         assert_eq!(config.executable_path, "/usr/bin/sd-cli");
         assert_eq!(config.max_concurrent_tasks, 2);
@@ -2282,6 +2285,8 @@ mod agent_system_tests {
                 parameters: serde_json::json!({"width": 512, "height": 512, "steps": 20}),
                 timestamp: chrono::Utc::now(),
                 error: None,
+                    quality_score: None,
+                    gpu_tier: String::new(),
             }).await;
         }
 
@@ -2305,6 +2310,8 @@ mod agent_system_tests {
             parameters: serde_json::json!({}),
             timestamp: chrono::Utc::now(),
             error: Some("model not found".to_string()),
+            quality_score: None,
+            gpu_tier: String::new(),
         }).await;
 
         let stats = intel.get_skill_stats().await;

@@ -1,0 +1,89 @@
+diff --git a/include/stable-diffusion.h b/include/stable-diffusion.h
+index aa3576c..fc2ae73 100644
+--- a/include/stable-diffusion.h
++++ b/include/stable-diffusion.h
+@@ -464,6 +464,13 @@ SD_API bool generate_image(sd_ctx_t* sd_ctx,
+                            sd_image_t** images_out,
+                            int* num_images_out);
+ 
++// Encodes and decodes one image with the loaded VAE. This is intended for
++// native runtime/model diagnostics and does not invoke the diffusion model.
++SD_API bool vae_roundtrip(sd_ctx_t* sd_ctx,
++                          sd_image_t input_image,
++                          int width,
++                          int height,
++                          sd_image_t** images_out,
++                          int* num_images_out);
++
+ enum sd_cancel_mode_t {
+     // Stop the current generation as soon as possible.
+     SD_CANCEL_ALL,
+diff --git a/src/stable-diffusion.cpp b/src/stable-diffusion.cpp
+index 5522d07..d9d3e12 100644
+--- a/src/stable-diffusion.cpp
++++ b/src/stable-diffusion.cpp
+@@ -4831,6 +4831,54 @@ SD_API bool generate_image(sd_ctx_t* sd_ctx,
+     return true;
+ }
+ 
++SD_API bool vae_roundtrip(sd_ctx_t* sd_ctx,
++                          sd_image_t input_image,
++                          int width,
++                          int height,
++                          sd_image_t** images_out,
++                          int* num_images_out) {
++    if (sd_ctx == nullptr || input_image.data == nullptr || width <= 0 || height <= 0) {
++        return false;
++    }
++    if (images_out != nullptr) {
++        *images_out = nullptr;
++    }
++    if (num_images_out != nullptr) {
++        *num_images_out = 0;
++    }
++
++    sd_ctx->sd->reset_cancel_flag();
++    sd::Tensor<float> image = sd_image_to_tensor(input_image, width, height);
++    if (image.empty()) {
++        LOG_ERROR("VAE roundtrip failed to prepare the input image");
++        return false;
++    }
++    sd::Tensor<float> latent = sd_ctx->sd->encode_first_stage(image);
++    if (latent.empty()) {
++        LOG_ERROR("VAE roundtrip encode failed");
++        return false;
++    }
++    LOG_INFO("VAE roundtrip latent %dx%dx%dx%d",
++             (int)latent.shape()[0],
++             (int)latent.shape()[1],
++             (int)latent.shape()[2],
++             (int)latent.shape()[3]);
++
++    sd::Tensor<float> decoded = sd_ctx->sd->decode_first_stage(latent, sd_ctx->sd->version == VERSION_SVD);
++    if (decoded.empty()) {
++        LOG_ERROR("VAE roundtrip decode failed");
++        return false;
++    }
++    sd_image_t* result = (sd_image_t*)calloc(1, sizeof(sd_image_t));
++    if (result == nullptr) {
++        return false;
++    }
++    result[0] = tensor_to_sd_image(decoded);
++    if (result[0].data == nullptr) {
++        free(result);
++        return false;
++    }
++    if (images_out != nullptr) {
++        *images_out = result;
++    } else {
++        free_sd_images(result, 1);
++    }
++    if (num_images_out != nullptr) {
++        *num_images_out = 1;
++    }
++    return true;
++}
++
+ static std::optional<ImageGenerationLatents> prepare_video_generation_latents(sd_ctx_t* sd_ctx,
+                                                                               const sd_vid_gen_params_t* sd_vid_gen_params,
+                                                                               GenerationRequest* request) {

@@ -13,6 +13,7 @@ pub mod config;
 pub mod monitor;
 pub mod model_manager;
 pub mod preview;
+pub mod native_runtime;
 
 // 导出常用类型
 pub use types::*;

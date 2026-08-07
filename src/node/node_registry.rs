@@ -315,18 +315,24 @@ impl NodeRegistry {
         // === 视频节点 ===
         specs.insert("SVDImageToVideo".to_string(), NodeSpec {
             class_type: "SVDImageToVideo".to_string(),
-            display_name: "SVD 图转视频".to_string(),
+            display_name: "原生图转视频 (Wan/SVD)".to_string(),
             category: "视频".to_string(),
             inputs: vec![
                 NodePort { name: "image".into(), data_kind: DataKind::IMAGE, required: true, default: None, description: "输入图片".into() },
-                NodePort { name: "model".into(), data_kind: DataKind::MODEL, required: true, default: None, description: "SVD 模型".into() },
+                NodePort { name: "model".into(), data_kind: DataKind::MODEL, required: true, default: None, description: "Wan 或 SVD 原生视频模型".into() },
+                NodePort { name: "prompt".into(), data_kind: DataKind::STRING, required: false, default: Some(serde_json::json!("")), description: "动作与画面提示词（Wan 使用）".into() },
+                NodePort { name: "negative_prompt".into(), data_kind: DataKind::STRING, required: false, default: Some(serde_json::json!("")), description: "负面提示词".into() },
                 NodePort { name: "frames".into(), data_kind: DataKind::INT, required: false, default: Some(serde_json::json!(14)), description: "帧数".into() },
                 NodePort { name: "fps".into(), data_kind: DataKind::INT, required: false, default: Some(serde_json::json!(6)), description: "帧率".into() },
+                NodePort { name: "motion_bucket_id".into(), data_kind: DataKind::INT, required: false, default: Some(serde_json::json!(127)), description: "运动强度".into() },
+                NodePort { name: "cfg".into(), data_kind: DataKind::FLOAT, required: false, default: Some(serde_json::json!(3.0)), description: "末帧 CFG".into() },
+                NodePort { name: "min_cfg".into(), data_kind: DataKind::FLOAT, required: false, default: Some(serde_json::json!(1.0)), description: "首帧 CFG".into() },
+                NodePort { name: "noise_aug_strength".into(), data_kind: DataKind::FLOAT, required: false, default: Some(serde_json::json!(0.02)), description: "SVD 条件图噪声增强".into() },
             ],
             outputs: vec![
                 NodePort { name: "FRAMES".into(), data_kind: DataKind::FRAMES, required: true, default: None, description: "帧序列".into() },
             ],
-            description: "使用 SVD 将单张图片转换为视频帧序列".into(),
+            description: "使用 Wan 文本可控模型或 SVD 快速模型将图片转换为视频".into(),
         });
         
         specs.insert("VideoCombine".to_string(), NodeSpec {

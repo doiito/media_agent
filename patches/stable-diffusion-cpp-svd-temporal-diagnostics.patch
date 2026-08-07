@@ -1,0 +1,45 @@
+diff --git a/src/model/common/block.hpp b/src/model/common/block.hpp
+index 57ccad1..a1a76fa 100644
+--- a/src/model/common/block.hpp
++++ b/src/model/common/block.hpp
+@@ -1,6 +1,8 @@
+ #ifndef __SD_MODEL_COMMON_BLOCK_HPP__
+ #define __SD_MODEL_COMMON_BLOCK_HPP__
+ 
++#include <cstdlib>
++
+ #include "core/ggml_extend.hpp"
+ #include "core/util.h"
+ #include "ggml-backend.h"
+@@ -611,6 +613,10 @@ public:
+         auto time_mixer = std::dynamic_pointer_cast<AlphaBlender>(blocks["time_mixer"]);
+ 
+         x = ResBlock::forward(ctx, x, emb);
++        if (std::getenv("MEDIA_SD_SVD_DISABLE_TEMPORAL_RESBLOCK") != nullptr) {
++            return x;
++        }
+ 
+         int64_t T = num_video_frames;
+         int64_t B = x->ne[3] / T;
+diff --git a/src/model/diffusion/unet.hpp b/src/model/diffusion/unet.hpp
+index 16c3cf7..251e7b5 100644
+--- a/src/model/diffusion/unet.hpp
++++ b/src/model/diffusion/unet.hpp
+@@ -2,6 +2,7 @@
+ #define __SD_MODEL_DIFFUSION_UNET_HPP__
+ 
+ #include <algorithm>
++#include <cstdlib>
+ #include <vector>
+ 
+ #include "model.h"
+@@ -256,6 +257,10 @@ public:
+             auto mix_block = std::dynamic_pointer_cast<BasicTransformerBlock>(blocks[time_stack_name]);
+ 
+             x = block->forward(ctx, x, spatial_context);  // [N, h * w, inner_dim]
++            if (std::getenv("MEDIA_SD_SVD_DISABLE_TEMPORAL_TRANSFORMER") != nullptr) {
++                continue;
++            }
+ 
+             // in_channels == inner_dim
+             auto x_mix = x;

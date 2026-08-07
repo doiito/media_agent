@@ -302,7 +302,10 @@ impl Monitor {
 
         // 磁盘空间告警
         for disk in &snapshot.disks {
-            if disk.usage > 90.0 {
+            let free_space = disk.total_space.saturating_sub(disk.used_space);
+            if disk.usage > self.config.disk_alert_threshold
+                && free_space < self.config.disk_min_free_bytes
+            {
                 new_alerts.push(Alert {
                     id: format!("disk-{}-{}", disk.mount_point, snapshot.timestamp),
                     level: if disk.usage > 98.0 {
@@ -312,15 +315,15 @@ impl Monitor {
                     },
                     kind: AlertKind::LowDiskSpace,
                     message: format!(
-                        "Disk {} is {:.1}% full ({} of {} bytes used)",
+                        "Disk {} is {:.1}% full ({} bytes free; minimum {} bytes)",
                         disk.mount_point,
                         disk.usage,
-                        disk.used_space,
-                        disk.total_space
+                        free_space,
+                        self.config.disk_min_free_bytes
                     ),
                     timestamp: snapshot.timestamp,
                     current_value: disk.usage,
-                    threshold: 90.0,
+                    threshold: self.config.disk_alert_threshold,
                 });
             }
         }

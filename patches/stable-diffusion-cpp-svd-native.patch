@@ -1,0 +1,219 @@
+diff --git a/include/stable-diffusion.h b/include/stable-diffusion.h
+index 577ea7a..aa3576c 100644
+--- a/include/stable-diffusion.h
++++ b/include/stable-diffusion.h
+@@ -398,6 +398,7 @@ typedef struct {
+     int64_t seed;
+     int video_frames;
+     int fps;
++    int motion_bucket_id;
+     float vace_strength;
+     sd_tiling_params_t vae_tiling_params;
+     sd_cache_params_t cache;
+diff --git a/src/stable-diffusion.cpp b/src/stable-diffusion.cpp
+index 913de2c..7d46943 100644
+--- a/src/stable-diffusion.cpp
++++ b/src/stable-diffusion.cpp
+@@ -848,6 +848,24 @@ public:
+                 diffusion_model  = std::make_shared<Lens::LensRunner>(backend_for(SDBackendModule::DIFFUSION),
+                                                                      tensor_storage_map,
+                                                                      "model.diffusion_model",
+                                                                      model_manager);
++            } else if (version == VERSION_SVD) {
++                if (!ensure_backend_pair(SDBackendModule::CLIP_VISION)) {
++                    return false;
++                }
++                clip_vision = std::make_shared<FrozenCLIPVisionEmbedder>(backend_for(SDBackendModule::CLIP_VISION),
++                                                                         tensor_storage_map,
++                                                                         model_manager);
++                clip_vision->set_max_graph_vram_bytes(max_graph_vram_bytes_for_module(SDBackendModule::CLIP_VISION));
++                if (!register_runner_params("CLIP vision",
++                                            clip_vision,
++                                            SDBackendModule::CLIP_VISION)) {
++                    return false;
++                }
++                diffusion_model = std::make_shared<UNetModelRunner>(backend_for(SDBackendModule::DIFFUSION),
++                                                                    tensor_storage_map,
++                                                                    "model.diffusion_model",
++                                                                    version,
++                                                                    model_manager);
+             } else {  // SD1.x SD2.x SDXL
+                 std::map<std::string, std::string> embbeding_map;
+                 for (uint32_t i = 0; i < sd_ctx_params->embedding_count; i++) {
+@@ -870,12 +888,14 @@ public:
+                 }
+             }
+ 
+-            cond_stage_model->set_max_graph_vram_bytes(max_graph_vram_bytes_for_module(SDBackendModule::TE));
+-            if (!register_runner_params("Conditioner model",
+-                                        cond_stage_model,
+-                                        SDBackendModule::TE,
+-                                        &text_encoder_params_mem_size)) {
+-                return false;
++            if (cond_stage_model) {
++                cond_stage_model->set_max_graph_vram_bytes(max_graph_vram_bytes_for_module(SDBackendModule::TE));
++                if (!register_runner_params("Conditioner model",
++                                            cond_stage_model,
++                                            SDBackendModule::TE,
++                                            &text_encoder_params_mem_size)) {
++                    return false;
++                }
+             }
+ 
+             diffusion_model->set_max_graph_vram_bytes(max_graph_vram_bytes_for_module(SDBackendModule::DIFFUSION));
+@@ -952,7 +972,7 @@ public:
+                     auto model = std::make_shared<AutoEncoderKL>(backend_for(SDBackendModule::VAE),
+                                                                  tensor_storage_map,
+                                                                  "first_stage_model",
+                                                                  false,
+-                                                                 false,
++                                                                 version == VERSION_SVD,
+                                                                  vae_version,
+                                                                  model_manager);
+                     if (sd_version_is_sdxl(version) &&
+@@ -1095,7 +1115,9 @@ public:
+ 
+             if (sd_ctx_params->flash_attn) {
+                 LOG_INFO("Using flash attention");
+-                cond_stage_model->set_flash_attention_enabled(true);
++                if (cond_stage_model) {
++                    cond_stage_model->set_flash_attention_enabled(true);
++                }
+                 if (clip_vision) {
+                     clip_vision->set_flash_attention_enabled(true);
+                 }
+@@ -1256,6 +1278,8 @@ public:
+                         pred_type = EPS_PRED;
+                     }
++                } else if (version == VERSION_SVD) {
++                    pred_type = V_PRED;
+                 } else if (sd_version_is_sd3(version) ||
+                            sd_version_is_wan(version) ||
+                            sd_version_is_qwen_image(version) ||
+@@ -3046,6 +3070,7 @@ void sd_vid_gen_params_init(sd_vid_gen_params_t* sd_vid_gen_params) {
+     sd_vid_gen_params->seed                                  = -1;
+     sd_vid_gen_params->video_frames                          = 6;
+     sd_vid_gen_params->fps                                   = 16;
++    sd_vid_gen_params->motion_bucket_id                      = 127;
+     sd_vid_gen_params->moe_boundary                          = 0.875f;
+     sd_vid_gen_params->vace_strength                         = 1.f;
+     sd_vid_gen_params->vae_tiling_params                     = {false, false, 0, 0, 0.5f, 0.0f, 0.0f, nullptr};
+@@ -3281,6 +3306,7 @@ struct GenerationRequest {
+     int frames                               = -1;
+     int requested_frames                     = -1;
+     int fps                                  = 16;
++    int motion_bucket_id                     = 127;
+     float vace_strength                      = 1.f;
+ 
+     GenerationRequest(sd_ctx_t* sd_ctx, const sd_img_gen_params_t* sd_img_gen_params) {
+@@ -3317,6 +3343,7 @@ struct GenerationRequest {
+         frames                      = sd_ctx->sd->align_video_frames(requested_frames);
+         clip_skip                   = sd_vid_gen_params->clip_skip;
+         fps                         = std::max(1, sd_vid_gen_params->fps);
++        motion_bucket_id            = std::clamp(sd_vid_gen_params->motion_bucket_id, 0, 1023);
+         vae_scale_factor            = sd_ctx->sd->get_vae_scale_factor();
+         diffusion_model_down_factor = sd_ctx->sd->get_diffusion_model_down_factor();
+         seed                        = sd_vid_gen_params->seed;
+@@ -4831,6 +4858,34 @@ static std::optional<ImageGenerationLatents> prepare_video_generation_latents(sd
+         latents.audio_latent = make_ltxav_empty_audio_latent(latents.audio_length);
+     }
+ 
++    if (sd_ctx->sd->version == VERSION_SVD) {
++        if (start_image.empty()) {
++            LOG_ERROR("SVD image-to-video requires an init image");
++            return std::nullopt;
++        }
++        if (sd_ctx->sd->clip_vision == nullptr) {
++            LOG_ERROR("SVD image-to-video requires a CLIP vision encoder");
++            return std::nullopt;
++        }
++
++        latents.clip_vision_output = sd_ctx->sd->get_clip_vision_output(start_image, true, -1);
++        if (latents.clip_vision_output.empty()) {
++            LOG_ERROR("failed to compute SVD CLIP vision conditioning");
++            return std::nullopt;
++        }
++
++        latents.concat_latent = sd_ctx->sd->encode_first_stage(start_image);
++        if (latents.concat_latent.empty()) {
++            LOG_ERROR("failed to encode SVD init image");
++            return std::nullopt;
++        }
++
++        const int W = request->width / request->vae_scale_factor;
++        const int H = request->height / request->vae_scale_factor;
++        const int C = sd_ctx->sd->get_latent_channel();
++        latents.init_latent = sd::zeros<float>({W, H, C, request->frames});
++        LOG_INFO("prepared SVD image conditioning, motion bucket %d, fps %d",
++                 request->motion_bucket_id,
++                 request->fps);
++    }
++
+     if (sd_version_is_ltxav(sd_ctx->sd->version)) {
+         if (sd_vid_gen_params->control_frames_size > 0) {
+             LOG_ERROR("LTXAV control_frames are not implemented");
+@@ -5122,6 +5177,30 @@ static ImageGenerationEmbeds prepare_video_generation_embeds(sd_ctx_t* sd_ctx,
+                                                              const sd_vid_gen_params_t* sd_vid_gen_params,
+                                                              const GenerationRequest& request,
+                                                              const ImageGenerationLatents& latents) {
++    if (sd_ctx->sd->version == VERSION_SVD) {
++        int64_t prepare_start_ms = ggml_time_ms();
++        ImageGenerationEmbeds embeds;
++        embeds.cond.c_crossattn = latents.clip_vision_output;
++        embeds.cond.c_concat    = latents.concat_latent;
++
++        sd::Tensor<float> added_time_ids({768});
++        set_timestep_embedding({static_cast<float>(std::max(1, request.fps) - 1),
++                                static_cast<float>(request.motion_bucket_id),
++                                0.f},
++                               &added_time_ids,
++                               256);
++        embeds.cond.c_vector = std::move(added_time_ids);
++
++        if (request.use_uncond) {
++            embeds.uncond.c_crossattn = sd::Tensor<float>::zeros_like(embeds.cond.c_crossattn);
++            embeds.uncond.c_concat    = sd::Tensor<float>::zeros_like(embeds.cond.c_concat);
++            embeds.uncond.c_vector    = embeds.cond.c_vector;
++        }
++
++        int64_t t1 = ggml_time_ms();
++        LOG_INFO("get SVD image condition completed, taking %.2fs",
++                 (t1 - prepare_start_ms) * 1.0f / 1000);
++        return embeds;
++    }
++
+     ConditionerRunnerDoneOnExit conditioner_runner_done{sd_ctx->sd->cond_stage_model.get()};
+ 
+     ImageGenerationEmbeds embeds;
+@@ -5184,23 +5263,25 @@ static sd_image_t* decode_video_outputs(sd_ctx_t* sd_ctx,
+         return nullptr;
+     }
+     LOG_DEBUG("decode_video_outputs decoded %dx%dx%dx%d",
+               (int)vid.shape()[0],
+               (int)vid.shape()[1],
+               (int)vid.shape()[2],
+               (int)vid.shape()[3]);
++    const int frame_axis = sd_ctx->sd->version == VERSION_SVD && vid.dim() == 4 ? 3 : 2;
+     if (request.frames > 0 &&
+-        vid.shape()[2] > request.frames) {
+-        vid = sd::ops::slice(vid, 2, 0, request.frames);
++        vid.shape()[frame_axis] > request.frames) {
++        vid = sd::ops::slice(vid, frame_axis, 0, request.frames);
+     }
+ 
+-    sd_image_t* result_images = (sd_image_t*)calloc(vid.shape()[2], sizeof(sd_image_t));
++    const int64_t frame_count = vid.shape()[frame_axis];
++    sd_image_t* result_images = (sd_image_t*)calloc(frame_count, sizeof(sd_image_t));
+     if (result_images == nullptr) {
+         return nullptr;
+     }
+     if (num_frames_out != nullptr) {
+-        *num_frames_out = static_cast<int>(vid.shape()[2]);
++        *num_frames_out = static_cast<int>(frame_count);
+     }
+ 
+-    for (int64_t i = 0; i < vid.shape()[2]; i++) {
++    for (int64_t i = 0; i < frame_count; i++) {
+         result_images[i] = tensor_to_sd_image(vid, static_cast<int>(i));
+     }
+ 

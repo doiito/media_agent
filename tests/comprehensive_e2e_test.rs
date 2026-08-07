@@ -984,6 +984,8 @@ mod intelligence_tests {
             parameters: json!({"width": 512, "height": 512, "steps": 20}),
             timestamp: chrono::Utc::now(),
             error: None,
+                    quality_score: None,
+                    gpu_tier: String::new(),
         };
         intel.record_execution(record).await;
 
@@ -1007,6 +1009,8 @@ mod intelligence_tests {
             parameters: json!({}),
             timestamp: chrono::Utc::now(),
             error: Some("model not found".to_string()),
+            quality_score: None,
+            gpu_tier: String::new(),
         };
         intel.record_execution(record).await;
         // 因果引擎应该记录了失败观察
@@ -1061,6 +1065,8 @@ mod intelligence_tests {
                 parameters: json!({}),
                 timestamp: chrono::Utc::now(),
                 error: None,
+                    quality_score: None,
+                    gpu_tier: String::new(),
             }).await;
         }
         let rec = intel.recommend_parameters("text_to_image", "cat").await;

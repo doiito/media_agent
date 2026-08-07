@@ -1,0 +1,35 @@
+diff --git a/src/stable-diffusion.cpp b/src/stable-diffusion.cpp
+--- a/src/stable-diffusion.cpp
++++ b/src/stable-diffusion.cpp
+@@ -2472,6 +2472,21 @@ public:
+         return latents;
+     }
+ 
++    sd::Tensor<float> encode_svd_conditioning_latent(const sd::Tensor<float>& x) {
++        // SVD conditions the UNet with the deterministic VAE posterior mode.
++        // Unlike diffusion latents, this value is intentionally not multiplied
++        // by the VAE scaling factor (matching StableVideoDiffusionPipeline).
++        auto moments = first_stage_model->encode(n_threads,
++                                                 x,
++                                                 vae_tiling_params,
++                                                 circular_x,
++                                                 circular_y);
++        if (moments.empty()) {
++            return {};
++        }
++        auto posterior = sd::ops::chunk(moments, 2, 2);
++        return posterior.empty() ? sd::Tensor<float>() : std::move(posterior[0]);
++    }
++
+     sd::Tensor<float> decode_first_stage(const sd::Tensor<float>& x, bool decode_video = false) {
+         if (sd_version_is_pid(version) || sd_version_is_minit2i(version)) {
+             return sd::ops::clamp((x + 1.f) * 0.5f, 0.0f, 1.0f);
+@@ -4957,7 +4972,7 @@ static std::optional<ImageGenerationLatents> prepare_video_generation_latents(sd
+             return std::nullopt;
+         }
+ 
+-        latents.concat_latent = sd_ctx->sd->encode_first_stage(start_image);
++        latents.concat_latent = sd_ctx->sd->encode_svd_conditioning_latent(start_image);
+         if (latents.concat_latent.empty()) {
+             LOG_ERROR("failed to encode SVD init image");
+             return std::nullopt;

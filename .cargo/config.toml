@@ -1,0 +1,2 @@
+[env]
+CCACHE_DIR = { value = "/dev-data/ai-test/media_agent/target/ccache", force = true }

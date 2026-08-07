@@ -41,7 +41,7 @@ impl WorkflowBuilder {
                 class_type: "CLIPTextEncode".to_string(),
                 inputs: HashMap::from([
                     ("text".to_string(), InputValue::Direct(Value::String(prompt))),
-                    ("clip".to_string(), InputValue::Link(["1".to_string(), "1".to_string()])),
+                    ("clip".to_string(), InputValue::Link(["1".to_string(), "CLIP".to_string()])),
                 ]),
                 pos: None,
                 size: None,
@@ -56,7 +56,7 @@ impl WorkflowBuilder {
                 class_type: "CLIPTextEncode".to_string(),
                 inputs: HashMap::from([
                     ("text".to_string(), InputValue::Direct(Value::String(negative_prompt))),
-                    ("clip".to_string(), InputValue::Link(["1".to_string(), "1".to_string()])),
+                    ("clip".to_string(), InputValue::Link(["1".to_string(), "CLIP".to_string()])),
                 ]),
                 pos: None,
                 size: None,
@@ -86,10 +86,10 @@ impl WorkflowBuilder {
             WorkflowNode {
                 class_type: "KSampler".to_string(),
                 inputs: HashMap::from([
-                    ("model".to_string(), InputValue::Link(["1".to_string(), "0".to_string()])),
-                    ("positive".to_string(), InputValue::Link(["2".to_string(), "0".to_string()])),
-                    ("negative".to_string(), InputValue::Link(["3".to_string(), "0".to_string()])),
-                    ("latent_image".to_string(), InputValue::Link(["4".to_string(), "0".to_string()])),
+                    ("model".to_string(), InputValue::Link(["1".to_string(), "MODEL".to_string()])),
+                    ("positive".to_string(), InputValue::Link(["2".to_string(), "CONDITIONING".to_string()])),
+                    ("negative".to_string(), InputValue::Link(["3".to_string(), "CONDITIONING".to_string()])),
+                    ("latent_image".to_string(), InputValue::Link(["4".to_string(), "LATENT".to_string()])),
                     ("seed".to_string(), InputValue::Direct(Value::Int(seed as i64))),
                     ("steps".to_string(), InputValue::Direct(Value::Int(steps as i64))),
                     ("cfg".to_string(), InputValue::Direct(Value::Float(cfg as f64))),
@@ -109,8 +109,8 @@ impl WorkflowBuilder {
             WorkflowNode {
                 class_type: "VAEDecode".to_string(),
                 inputs: HashMap::from([
-                    ("samples".to_string(), InputValue::Link(["5".to_string(), "0".to_string()])),
-                    ("vae".to_string(), InputValue::Link(["1".to_string(), "2".to_string()])),
+                    ("samples".to_string(), InputValue::Link(["5".to_string(), "LATENT".to_string()])),
+                    ("vae".to_string(), InputValue::Link(["1".to_string(), "VAE".to_string()])),
                 ]),
                 pos: None,
                 size: None,
@@ -124,7 +124,7 @@ impl WorkflowBuilder {
             WorkflowNode {
                 class_type: "SaveImage".to_string(),
                 inputs: HashMap::from([
-                    ("images".to_string(), InputValue::Link(["6".to_string(), "0".to_string()])),
+                    ("images".to_string(), InputValue::Link(["6".to_string(), "IMAGE".to_string()])),
                     ("filename_prefix".to_string(), InputValue::Direct(Value::String("ComfyUI".to_string()))),
                 ]),
                 pos: None,
@@ -186,8 +186,8 @@ impl WorkflowBuilder {
             WorkflowNode {
                 class_type: "VAEEncode".to_string(),
                 inputs: HashMap::from([
-                    ("pixels".to_string(), InputValue::Link(["2".to_string(), "0".to_string()])),
-                    ("vae".to_string(), InputValue::Link(["1".to_string(), "2".to_string()])),
+                    ("pixels".to_string(), InputValue::Link(["2".to_string(), "IMAGE".to_string()])),
+                    ("vae".to_string(), InputValue::Link(["1".to_string(), "VAE".to_string()])),
                 ]),
                 pos: None,
                 size: None,
@@ -202,7 +202,7 @@ impl WorkflowBuilder {
                 class_type: "CLIPTextEncode".to_string(),
                 inputs: HashMap::from([
                     ("text".to_string(), InputValue::Direct(Value::String(prompt))),
-                    ("clip".to_string(), InputValue::Link(["1".to_string(), "1".to_string()])),
+                    ("clip".to_string(), InputValue::Link(["1".to_string(), "CLIP".to_string()])),
                 ]),
                 pos: None,
                 size: None,
@@ -217,7 +217,7 @@ impl WorkflowBuilder {
                 class_type: "CLIPTextEncode".to_string(),
                 inputs: HashMap::from([
                     ("text".to_string(), InputValue::Direct(Value::String(negative_prompt))),
-                    ("clip".to_string(), InputValue::Link(["1".to_string(), "1".to_string()])),
+                    ("clip".to_string(), InputValue::Link(["1".to_string(), "CLIP".to_string()])),
                 ]),
                 pos: None,
                 size: None,
@@ -231,10 +231,10 @@ impl WorkflowBuilder {
             WorkflowNode {
                 class_type: "KSampler".to_string(),
                 inputs: HashMap::from([
-                    ("model".to_string(), InputValue::Link(["1".to_string(), "0".to_string()])),
-                    ("positive".to_string(), InputValue::Link(["4".to_string(), "0".to_string()])),
-                    ("negative".to_string(), InputValue::Link(["5".to_string(), "0".to_string()])),
-                    ("latent_image".to_string(), InputValue::Link(["3".to_string(), "0".to_string()])),
+                    ("model".to_string(), InputValue::Link(["1".to_string(), "MODEL".to_string()])),
+                    ("positive".to_string(), InputValue::Link(["4".to_string(), "CONDITIONING".to_string()])),
+                    ("negative".to_string(), InputValue::Link(["5".to_string(), "CONDITIONING".to_string()])),
+                    ("latent_image".to_string(), InputValue::Link(["3".to_string(), "LATENT".to_string()])),
                     ("seed".to_string(), InputValue::Direct(Value::Int(seed as i64))),
                     ("steps".to_string(), InputValue::Direct(Value::Int(steps as i64))),
                     ("cfg".to_string(), InputValue::Direct(Value::Float(cfg as f64))),
@@ -254,8 +254,8 @@ impl WorkflowBuilder {
             WorkflowNode {
                 class_type: "VAEDecode".to_string(),
                 inputs: HashMap::from([
-                    ("samples".to_string(), InputValue::Link(["6".to_string(), "0".to_string()])),
-                    ("vae".to_string(), InputValue::Link(["1".to_string(), "2".to_string()])),
+                    ("samples".to_string(), InputValue::Link(["6".to_string(), "LATENT".to_string()])),
+                    ("vae".to_string(), InputValue::Link(["1".to_string(), "VAE".to_string()])),
                 ]),
                 pos: None,
                 size: None,
@@ -269,7 +269,7 @@ impl WorkflowBuilder {
             WorkflowNode {
                 class_type: "SaveImage".to_string(),
                 inputs: HashMap::from([
-                    ("images".to_string(), InputValue::Link(["7".to_string(), "0".to_string()])),
+                    ("images".to_string(), InputValue::Link(["7".to_string(), "IMAGE".to_string()])),
                     ("filename_prefix".to_string(), InputValue::Direct(Value::String("ComfyUI".to_string()))),
                 ]),
                 pos: None,
@@ -284,14 +284,23 @@ impl WorkflowBuilder {
         })
     }
 
-    /// 创建图生视频工作流（LoadImage → SVDImageToVideo → VideoCombine）
+    /// 创建原生图生视频工作流（CheckpointLoaderSimple → LoadImage → SVDImageToVideo）。
+    ///
+    /// `SVDImageToVideo` 节点内部已经负责生成并保存最终 MP4，
+    /// 因此这里不再额外接 `VideoCombine`，避免错误地把视频字节当作图片帧再次编码。
     pub fn image_to_video(
         image_path: String,
         model: String,
+        prompt: String,
+        negative_prompt: String,
+        width: usize,
+        height: usize,
         frames: usize,
         fps: usize,
         motion_bucket_id: i32,
         cfg: f32,
+        min_cfg: f32,
+        noise_aug_strength: f32,
         steps: usize,
         seed: i64,
     ) -> Result<Workflow, Error> {
@@ -319,25 +328,20 @@ impl WorkflowBuilder {
         nodes.insert("3".to_string(), WorkflowNode {
             class_type: "SVDImageToVideo".to_string(),
             inputs: HashMap::from([
-                ("model".to_string(), InputValue::Link(["1".to_string(), "0".to_string()])),
-                ("image".to_string(), InputValue::Link(["2".to_string(), "0".to_string()])),
+                ("model".to_string(), InputValue::Link(["1".to_string(), "MODEL".to_string()])),
+                ("image".to_string(), InputValue::Link(["2".to_string(), "IMAGE".to_string()])),
+                ("prompt".to_string(), InputValue::Direct(Value::String(prompt))),
+                ("negative_prompt".to_string(), InputValue::Direct(Value::String(negative_prompt))),
+                ("width".to_string(), InputValue::Direct(Value::Int(width as i64))),
+                ("height".to_string(), InputValue::Direct(Value::Int(height as i64))),
                 ("frames".to_string(), InputValue::Direct(Value::Int(frames as i64))),
                 ("fps".to_string(), InputValue::Direct(Value::Int(fps as i64))),
                 ("motion_bucket_id".to_string(), InputValue::Direct(Value::Int(motion_bucket_id as i64))),
                 ("cfg".to_string(), InputValue::Direct(Value::Float(cfg as f64))),
+                ("min_cfg".to_string(), InputValue::Direct(Value::Float(min_cfg as f64))),
+                ("noise_aug_strength".to_string(), InputValue::Direct(Value::Float(noise_aug_strength as f64))),
                 ("steps".to_string(), InputValue::Direct(Value::Int(steps as i64))),
                 ("seed".to_string(), InputValue::Direct(Value::Int(seed))),
-            ]),
-            pos: None, size: None, is_changed: None,
-        });
-
-        // Node 4: VideoCombine
-        nodes.insert("4".to_string(), WorkflowNode {
-            class_type: "VideoCombine".to_string(),
-            inputs: HashMap::from([
-                ("frames".to_string(), InputValue::Link(["3".to_string(), "0".to_string()])),
-                ("fps".to_string(), InputValue::Direct(Value::Int(fps as i64))),
-                ("filename_prefix".to_string(), InputValue::Direct(Value::String("comfyui_video".to_string()))),
             ]),
             pos: None, size: None, is_changed: None,
         });
@@ -374,7 +378,7 @@ impl WorkflowBuilder {
             class_type: "CLIPTextEncode".to_string(),
             inputs: HashMap::from([
                 ("text".to_string(), InputValue::Direct(Value::String(prompt))),
-                ("clip".to_string(), InputValue::Link(["1".to_string(), "1".to_string()])),
+                ("clip".to_string(), InputValue::Link(["1".to_string(), "CLIP".to_string()])),
             ]),
             pos: None, size: None, is_changed: None,
         });
@@ -384,7 +388,7 @@ impl WorkflowBuilder {
             class_type: "CLIPTextEncode".to_string(),
             inputs: HashMap::from([
                 ("text".to_string(), InputValue::Direct(Value::String(negative_prompt))),
-                ("clip".to_string(), InputValue::Link(["1".to_string(), "1".to_string()])),
+                ("clip".to_string(), InputValue::Link(["1".to_string(), "CLIP".to_string()])),
             ]),
             pos: None, size: None, is_changed: None,
         });
@@ -404,10 +408,10 @@ impl WorkflowBuilder {
         nodes.insert("5".to_string(), WorkflowNode {
             class_type: "AnimateDiffSampler".to_string(),
             inputs: HashMap::from([
-                ("model".to_string(), InputValue::Link(["1".to_string(), "0".to_string()])),
-                ("positive".to_string(), InputValue::Link(["2".to_string(), "0".to_string()])),
-                ("negative".to_string(), InputValue::Link(["3".to_string(), "0".to_string()])),
-                ("latent_image".to_string(), InputValue::Link(["4".to_string(), "0".to_string()])),
+                ("model".to_string(), InputValue::Link(["1".to_string(), "MODEL".to_string()])),
+                ("positive".to_string(), InputValue::Link(["2".to_string(), "CONDITIONING".to_string()])),
+                ("negative".to_string(), InputValue::Link(["3".to_string(), "CONDITIONING".to_string()])),
+                ("latent_image".to_string(), InputValue::Link(["4".to_string(), "LATENT".to_string()])),
                 ("seed".to_string(), InputValue::Direct(Value::Int(seed))),
                 ("steps".to_string(), InputValue::Direct(Value::Int(steps as i64))),
                 ("cfg".to_string(), InputValue::Direct(Value::Float(cfg as f64))),
@@ -419,8 +423,8 @@ impl WorkflowBuilder {
         nodes.insert("6".to_string(), WorkflowNode {
             class_type: "VAEDecode".to_string(),
             inputs: HashMap::from([
-                ("samples".to_string(), InputValue::Link(["5".to_string(), "0".to_string()])),
-                ("vae".to_string(), InputValue::Link(["1".to_string(), "2".to_string()])),
+                ("samples".to_string(), InputValue::Link(["5".to_string(), "LATENT".to_string()])),
+                ("vae".to_string(), InputValue::Link(["1".to_string(), "VAE".to_string()])),
             ]),
             pos: None, size: None, is_changed: None,
         });
@@ -429,7 +433,7 @@ impl WorkflowBuilder {
         nodes.insert("7".to_string(), WorkflowNode {
             class_type: "VideoCombine".to_string(),
             inputs: HashMap::from([
-                ("frames".to_string(), InputValue::Link(["6".to_string(), "0".to_string()])),
+                ("frames".to_string(), InputValue::Link(["6".to_string(), "IMAGE".to_string()])),
                 ("fps".to_string(), InputValue::Direct(Value::Int(fps as i64))),
                 ("filename_prefix".to_string(), InputValue::Direct(Value::String("comfyui_video".to_string()))),
             ]),
@@ -449,14 +453,16 @@ mod tests {
         let wf = WorkflowBuilder::image_to_video(
             "input/bk_0015.jpg".into(),
             "svd_xt.safetensors".into(),
-            25, 8, 127, 2.5, 25, 42,
+            "a person dancing".into(),
+            "static".into(),
+            1024,
+            576,
+            25, 8, 127, 3.0, 1.0, 0.02, 25, 42,
         ).unwrap();
 
         assert!(wf.nodes.contains_key("1")); // CheckpointLoaderSimple
         assert!(wf.nodes.contains_key("2")); // LoadImage
         assert!(wf.nodes.contains_key("3")); // SVDImageToVideo
-        assert!(wf.nodes.contains_key("4")); // VideoCombine
-
         // 验证 SVD 节点的 class_type
         assert_eq!(wf.nodes.get("3").unwrap().class_type, "SVDImageToVideo");
         // 验证 LoadImage 的 image 参数
@@ -491,5 +497,56 @@ mod tests {
         } else {
             panic!("Expected Direct Int for batch_size");
         }
+    }
+
+    #[test]
+    fn test_text_to_image_workflow_uses_named_output_slots() {
+        let wf = WorkflowBuilder::text_to_image(
+            "a cat".into(),
+            "".into(),
+            512,
+            512,
+            20,
+            7.0,
+            42,
+            "v1-5-pruned-emaonly.safetensors".into(),
+        )
+        .unwrap();
+
+        let clip_input = wf.nodes.get("2").unwrap().inputs.get("clip").unwrap();
+        assert!(matches!(clip_input, InputValue::Link([from, slot]) if from == "1" && slot == "CLIP"));
+
+        let model_input = wf.nodes.get("5").unwrap().inputs.get("model").unwrap();
+        assert!(matches!(model_input, InputValue::Link([from, slot]) if from == "1" && slot == "MODEL"));
+
+        let latent_input = wf.nodes.get("5").unwrap().inputs.get("latent_image").unwrap();
+        assert!(matches!(latent_input, InputValue::Link([from, slot]) if from == "4" && slot == "LATENT"));
+
+        let image_input = wf.nodes.get("7").unwrap().inputs.get("images").unwrap();
+        assert!(matches!(image_input, InputValue::Link([from, slot]) if from == "6" && slot == "IMAGE"));
+    }
+
+    #[test]
+    fn test_image_to_image_workflow_uses_named_output_slots() {
+        let wf = WorkflowBuilder::image_to_image(
+            "oil painting".into(),
+            "".into(),
+            "input/example.png".into(),
+            0.75,
+            20,
+            7.0,
+            42,
+            "v1-5-pruned-emaonly.safetensors".into(),
+        )
+        .unwrap();
+
+        let image_input = wf.nodes.get("3").unwrap().inputs.get("pixels").unwrap();
+        assert!(matches!(image_input, InputValue::Link([from, slot]) if from == "2" && slot == "IMAGE"));
+
+        let vae_input = wf.nodes.get("3").unwrap().inputs.get("vae").unwrap();
+        assert!(matches!(vae_input, InputValue::Link([from, slot]) if from == "1" && slot == "VAE"));
+
+        let save_input = wf.nodes.get("8").unwrap().inputs.get("images").unwrap();
+        assert!(matches!(save_input, InputValue::Link([from, slot]) if from == "7" && slot == "IMAGE"));
     }
 }

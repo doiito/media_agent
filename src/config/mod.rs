@@ -5,6 +5,8 @@ use crate::backend::{LlamaCppConfig, SdCppConfig};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
+pub mod gpu_tier;
+
 /// 应用顶层配置
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppConfig {
@@ -20,6 +22,10 @@ pub struct AppConfig {
     #[serde(default)]
     pub llama_cpp: LlamaCppConfig,
 
+    /// Gliding Horse Agent 与 LLM 网关配置
+    #[serde(default)]
+    pub agent: AgentConfig,
+
     /// 日志配置
     #[serde(default)]
     pub log: LogConfig,
@@ -31,6 +37,155 @@ pub struct AppConfig {
     /// 路径配置
     #[serde(default)]
     pub paths: PathsConfig,
+}
+
+/// Agent 使用的 OpenAI 兼容 LLM Provider。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentLlmProvider {
+    LlamaCpp,
+    Deepseek,
+}
+
+impl Default for AgentLlmProvider {
+    fn default() -> Self {
+        match std::env::var("AGENT_LLM_PROVIDER")
+            .unwrap_or_else(|_| "llama_cpp".to_string())
+            .to_ascii_lowercase()
+            .as_str()
+        {
+            "deepseek" => Self::Deepseek,
+            _ => Self::LlamaCpp,
+        }
+    }
+}
+
+/// Gliding Horse 使用的 OpenAI 兼容网关配置。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentLlmConfig {
+    #[serde(default)]
+    pub provider: AgentLlmProvider,
+
+    /// Provider 根地址。可以带或不带 `/v1`，使用时会统一规范化。
+    #[serde(default = "default_agent_llm_base_url")]
+    pub base_url: String,
+
+    #[serde(default = "default_agent_llm_api_key")]
+    pub api_key: String,
+
+    #[serde(default = "default_agent_llm_model")]
+    pub model: String,
+
+    #[serde(default = "default_agent_llm_timeout")]
+    pub timeout_seconds: u64,
+
+    #[serde(default = "default_agent_llm_retries")]
+    pub max_retries: u32,
+}
+
+impl AgentLlmConfig {
+    /// Gliding Horse 会自行追加 `/v1/chat/completions`，因此这里返回不带 `/v1` 的根地址。
+    pub fn gateway_base_url(&self) -> String {
+        let trimmed = self.base_url.trim_end_matches('/');
+        trimmed
+            .strip_suffix("/v1")
+            .unwrap_or(trimmed)
+            .to_string()
+    }
+
+    pub fn merge_env_overrides(&mut self) {
+        let configured_provider = self.provider;
+        if let Ok(provider) = std::env::var("AGENT_LLM_PROVIDER") {
+            self.provider = if provider.eq_ignore_ascii_case("deepseek") {
+                AgentLlmProvider::Deepseek
+            } else {
+                AgentLlmProvider::LlamaCpp
+            };
+        }
+
+        let provider_prefix = match self.provider {
+            AgentLlmProvider::LlamaCpp => "LLAMA",
+            AgentLlmProvider::Deepseek => "DEEPSEEK",
+        };
+        let provider_changed = self.provider != configured_provider;
+
+        if let Ok(url) = std::env::var("AGENT_LLM_BASE_URL")
+            .or_else(|_| std::env::var(format!("{}_API_URL", provider_prefix)))
+        {
+            self.base_url = url;
+        } else if provider_changed {
+            self.base_url = agent_provider_defaults(self.provider).0.to_string();
+        }
+        if let Ok(key) = std::env::var("AGENT_LLM_API_KEY")
+            .or_else(|_| std::env::var(format!("{}_API_KEY", provider_prefix)))
+        {
+            self.api_key = key;
+        } else if provider_changed {
+            self.api_key = agent_provider_defaults(self.provider).1.to_string();
+        }
+        if let Ok(model) = std::env::var("AGENT_LLM_MODEL")
+            .or_else(|_| std::env::var(format!("{}_MODEL", provider_prefix)))
+        {
+            self.model = model;
+        } else if provider_changed {
+            self.model = agent_provider_defaults(self.provider).2.to_string();
+        }
+    }
+}
+
+fn agent_provider_defaults(provider: AgentLlmProvider) -> (&'static str, &'static str, &'static str) {
+    match provider {
+        AgentLlmProvider::LlamaCpp => ("http://127.0.0.1:8081", "local", "local-model"),
+        AgentLlmProvider::Deepseek => ("https://api.deepseek.com", "", "deepseek-chat"),
+    }
+}
+
+impl Default for AgentLlmConfig {
+    fn default() -> Self {
+        Self {
+            provider: AgentLlmProvider::default(),
+            base_url: default_agent_llm_base_url(),
+            api_key: default_agent_llm_api_key(),
+            model: default_agent_llm_model(),
+            timeout_seconds: default_agent_llm_timeout(),
+            max_retries: default_agent_llm_retries(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentConfig {
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+
+    #[serde(default = "default_true")]
+    pub auto_initialize: bool,
+
+    #[serde(default = "default_agent_max_iterations")]
+    pub max_iterations: usize,
+
+    #[serde(default = "default_agent_max_pdca_cycles")]
+    pub max_pdca_cycles: usize,
+
+    /// Expose legacy ComfyUI node/workflow tools to the LLM.
+    #[serde(default)]
+    pub compatibility_tools_enabled: bool,
+
+    #[serde(default)]
+    pub llm: AgentLlmConfig,
+}
+
+impl Default for AgentConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            auto_initialize: true,
+            max_iterations: default_agent_max_iterations(),
+            max_pdca_cycles: default_agent_max_pdca_cycles(),
+            compatibility_tools_enabled: false,
+            llm: AgentLlmConfig::default(),
+        }
+    }
 }
 
 /// 服务器配置
@@ -132,6 +287,13 @@ pub struct MonitorConfig {
     /// 内存使用率告警阈值（百分比）
     #[serde(default = "default_mem_alert_threshold")]
     pub mem_alert_threshold: f32,
+
+    /// Disk alert requires both this usage percentage and low absolute free space.
+    #[serde(default = "default_disk_alert_threshold")]
+    pub disk_alert_threshold: f32,
+
+    #[serde(default = "default_disk_min_free_bytes")]
+    pub disk_min_free_bytes: u64,
 }
 
 impl Default for MonitorConfig {
@@ -142,6 +304,8 @@ impl Default for MonitorConfig {
             history_size: default_history_size(),
             cpu_alert_threshold: default_cpu_alert_threshold(),
             mem_alert_threshold: default_mem_alert_threshold(),
+            disk_alert_threshold: default_disk_alert_threshold(),
+            disk_min_free_bytes: default_disk_min_free_bytes(),
         }
     }
 }
@@ -243,6 +407,14 @@ fn default_mem_alert_threshold() -> f32 {
     85.0
 }
 
+fn default_disk_alert_threshold() -> f32 {
+    90.0
+}
+
+fn default_disk_min_free_bytes() -> u64 {
+    20 * 1024 * 1024 * 1024
+}
+
 fn default_models_dir() -> String {
     "models".to_string()
 }
@@ -271,6 +443,51 @@ fn default_skills_dir() -> String {
     std::env::var("SKILLS_DIR").unwrap_or_else(|_| "skills".to_string())
 }
 
+fn default_agent_llm_base_url() -> String {
+    std::env::var("AGENT_LLM_BASE_URL").unwrap_or_else(|_| {
+        match AgentLlmProvider::default() {
+            AgentLlmProvider::LlamaCpp => "http://127.0.0.1:8081".to_string(),
+            AgentLlmProvider::Deepseek => "https://api.deepseek.com".to_string(),
+        }
+    })
+}
+
+fn default_agent_llm_api_key() -> String {
+    std::env::var("AGENT_LLM_API_KEY").unwrap_or_else(|_| {
+        match AgentLlmProvider::default() {
+            AgentLlmProvider::LlamaCpp => "local".to_string(),
+            AgentLlmProvider::Deepseek => {
+                std::env::var("DEEPSEEK_API_KEY").unwrap_or_default()
+            }
+        }
+    })
+}
+
+fn default_agent_llm_model() -> String {
+    std::env::var("AGENT_LLM_MODEL").unwrap_or_else(|_| {
+        match AgentLlmProvider::default() {
+            AgentLlmProvider::LlamaCpp => "local-model".to_string(),
+            AgentLlmProvider::Deepseek => "deepseek-chat".to_string(),
+        }
+    })
+}
+
+fn default_agent_llm_timeout() -> u64 {
+    120
+}
+
+fn default_agent_llm_retries() -> u32 {
+    2
+}
+
+fn default_agent_max_iterations() -> usize {
+    15
+}
+
+fn default_agent_max_pdca_cycles() -> usize {
+    3
+}
+
 fn default_true() -> bool {
     true
 }
@@ -281,6 +498,7 @@ impl Default for AppConfig {
             server: ServerConfig::default(),
             sd_cpp: SdCppConfig::from_env(),
             llama_cpp: LlamaCppConfig::from_env(),
+            agent: AgentConfig::default(),
             log: LogConfig::default(),
             monitor: MonitorConfig::default(),
             paths: PathsConfig::default(),
@@ -349,6 +567,8 @@ impl AppConfig {
         if let Ok(dir) = std::env::var("INPUT_DIR") {
             self.paths.input_dir = dir;
         }
+
+        self.agent.llm.merge_env_overrides();
     }
 
     /// 确保所有目录存在
@@ -420,6 +640,29 @@ impl AppConfig {
             return Err(ConfigError::ValidationError(
                 "monitor.collect_interval_secs must be greater than 0".to_string(),
             ));
+        }
+
+        if self.agent.enabled {
+            if self.agent.max_iterations == 0 {
+                return Err(ConfigError::ValidationError(
+                    "agent.max_iterations must be greater than 0".to_string(),
+                ));
+            }
+            if self.agent.max_pdca_cycles == 0 {
+                return Err(ConfigError::ValidationError(
+                    "agent.max_pdca_cycles must be greater than 0".to_string(),
+                ));
+            }
+            if self.agent.llm.gateway_base_url().is_empty() {
+                return Err(ConfigError::ValidationError(
+                    "agent.llm.base_url cannot be empty".to_string(),
+                ));
+            }
+            if self.agent.llm.model.trim().is_empty() {
+                return Err(ConfigError::ValidationError(
+                    "agent.llm.model cannot be empty".to_string(),
+                ));
+            }
         }
 
         let valid_log_levels = ["trace", "debug", "info", "warn", "error"];
@@ -504,6 +747,34 @@ mod tests {
         let parsed: AppConfig = serde_json::from_str(&json).unwrap();
         assert_eq!(config.server.port, parsed.server.port);
         assert_eq!(config.log.level, parsed.log.level);
+    }
+
+    #[test]
+    fn test_agent_provider_gateway_normalization() {
+        let config: AppConfig = serde_json::from_str(r#"{
+            "agent": {
+                "llm": {
+                    "provider": "deepseek",
+                    "base_url": "https://api.deepseek.com/v1/",
+                    "api_key": "test-key",
+                    "model": "deepseek-chat"
+                }
+            }
+        }"#).unwrap();
+        assert_eq!(config.agent.llm.provider, AgentLlmProvider::Deepseek);
+        assert_eq!(config.agent.llm.gateway_base_url(), "https://api.deepseek.com");
+    }
+
+    #[test]
+    fn test_agent_provider_switch_defaults() {
+        assert_eq!(
+            agent_provider_defaults(AgentLlmProvider::LlamaCpp),
+            ("http://127.0.0.1:8081", "local", "local-model")
+        );
+        assert_eq!(
+            agent_provider_defaults(AgentLlmProvider::Deepseek),
+            ("https://api.deepseek.com", "", "deepseek-chat")
+        );
     }
 
     #[test]

@@ -1,0 +1,13 @@
+diff --git a/src/model.h b/src/model.h
+index 0be7e13..fa5dcd2 100644
+--- a/src/model.h
++++ b/src/model.h
+@@ -80,7 +80,8 @@ static inline bool sd_version_is_unet(SDVersion version) {
+     if (sd_version_is_sd1(version) ||
+         sd_version_is_sd2(version) ||
+-        sd_version_is_sdxl(version)) {
++        sd_version_is_sdxl(version) ||
++        version == VERSION_SVD) {
+         return true;
+     }
+     return false;

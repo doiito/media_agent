@@ -1,0 +1,76 @@
+diff --git a/src/model/common/block.hpp b/src/model/common/block.hpp
+index b02d4a7..621263b 100644
+--- a/src/model/common/block.hpp
++++ b/src/model/common/block.hpp
+@@ -404,10 +404,12 @@ public:
+     ggml_tensor* forward(GGMLRunnerContext* ctx,
+                          ggml_tensor* x,
+                          ggml_tensor* context,
+-                         bool skip_cross_attention = false) {
++                         bool skip_cross_attention = false,
++                         bool skip_self_attention  = false,
++                         bool skip_feed_forward    = false) {
+         // x: [N, n_token, query_dim]
+         // context: [N, n_context, context_dim]
+         // return: [N, n_token, query_dim]
+ 
+@@ -418,7 +420,7 @@ public:
+         auto norm2 = std::dynamic_pointer_cast<LayerNorm>(blocks["norm2"]);
+         auto norm3 = std::dynamic_pointer_cast<LayerNorm>(blocks["norm3"]);
+ 
+-        if (ff_in) {
++        if (ff_in && !skip_feed_forward) {
+             auto norm_in = std::dynamic_pointer_cast<LayerNorm>(blocks["norm_in"]);
+             auto ff_in   = std::dynamic_pointer_cast<FeedForward>(blocks["ff_in"]);
+ 
+@@ -428,10 +430,12 @@ public:
+         }
+ 
+         auto r = x;
+-        x      = norm1->forward(ctx, x);
+-        x      = attn1->forward(ctx, x, x);  // self-attention
+-        x      = ggml_add(ctx->ggml_ctx, x, r);
++        if (!skip_self_attention) {
++            x = norm1->forward(ctx, x);
++            x = attn1->forward(ctx, x, x);  // self-attention
++            x = ggml_add(ctx->ggml_ctx, x, r);
++        }
+         if (!skip_cross_attention) {
+             r = x;
+             x = norm2->forward(ctx, x);
+@@ -440,10 +444,12 @@ public:
+             x = attn2->forward(ctx, x, context);  // cross-attention
+             x = ggml_add(ctx->ggml_ctx, x, r);
+         }
+-        r      = x;
+-        x      = norm3->forward(ctx, x);
+-        x      = ff->forward(ctx, x);
+-        x      = ggml_add(ctx->ggml_ctx, x, r);
++        if (!skip_feed_forward) {
++            r = x;
++            x = norm3->forward(ctx, x);
++            x = ff->forward(ctx, x);
++            x = ggml_add(ctx->ggml_ctx, x, r);
++        }
+ 
+         return x;
+     }
+diff --git a/src/model/diffusion/unet.hpp b/src/model/diffusion/unet.hpp
+index 4f1b147..948d476 100644
+--- a/src/model/diffusion/unet.hpp
++++ b/src/model/diffusion/unet.hpp
+@@ -275,7 +275,13 @@ public:
+             const bool skip_temporal_cross_attention =
+                 std::getenv("MEDIA_SD_SVD_DISABLE_TEMPORAL_CROSS_ATTENTION") != nullptr;
+-            x_mix = mix_block->forward(ctx, x_mix, time_context, skip_temporal_cross_attention);
++            const bool skip_temporal_self_attention =
++                std::getenv("MEDIA_SD_SVD_DISABLE_TEMPORAL_SELF_ATTENTION") != nullptr;
++            const bool skip_temporal_feed_forward =
++                std::getenv("MEDIA_SD_SVD_DISABLE_TEMPORAL_FEED_FORWARD") != nullptr;
++            x_mix = mix_block->forward(ctx, x_mix, time_context,
++                                       skip_temporal_cross_attention,
++                                       skip_temporal_self_attention,
++                                       skip_temporal_feed_forward);
+             // [B * h * w, T, inner_dim]
+ 
+             x_mix = ggml_reshape_4d(ctx->ggml_ctx, x_mix, C, T, S, B);                         // (b s) t c -> b s t c

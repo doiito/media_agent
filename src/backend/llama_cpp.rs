@@ -47,8 +47,16 @@ impl From<LlamaError> for Error {
 /// llama.cpp 配置
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LlamaCppConfig {
+    /// 固定的 llama.cpp 源码目录，用于版本与构建校验。
+    #[serde(default = "default_source_path")]
+    pub source_path: String,
+
     #[serde(default = "default_executable_path")]
     pub executable_path: String,
+
+    /// OpenAI 兼容 Agent 网关使用的 llama-server。
+    #[serde(default = "default_server_path")]
+    pub server_path: String,
 
     #[serde(default)]
     pub model_path: String,
@@ -95,7 +103,24 @@ pub struct LlamaCppConfig {
 
 fn default_executable_path() -> String {
     std::env::var("LLAMA_CPP_EXECUTABLE")
-        .unwrap_or_else(|_| "llama-cli".to_string())
+        .unwrap_or_else(|_| {
+            let local = "/dev-data/ai-test/llama.cpp-b9810/build/bin/llama-cli";
+            if std::path::Path::new(local).is_file() {
+                local.to_string()
+            } else {
+                "llama-cli".to_string()
+            }
+        })
+}
+
+fn default_source_path() -> String {
+    std::env::var("LLAMA_CPP_SOURCE_DIR")
+        .unwrap_or_else(|_| "/dev-data/ai-test/llama.cpp-b9810".to_string())
+}
+
+fn default_server_path() -> String {
+    std::env::var("LLAMA_SERVER")
+        .unwrap_or_else(|_| "/dev-data/ai-test/llama.cpp-b9810/build/bin/llama-server".to_string())
 }
 
 fn default_backend() -> String {
@@ -139,7 +164,9 @@ fn default_max_concurrent() -> usize {
 impl Default for LlamaCppConfig {
     fn default() -> Self {
         Self {
+            source_path: default_source_path(),
             executable_path: default_executable_path(),
+            server_path: default_server_path(),
             model_path: String::new(),
             backend: default_backend(),
             n_ctx: default_n_ctx(),
@@ -158,6 +185,15 @@ impl Default for LlamaCppConfig {
 impl LlamaCppConfig {
     pub fn from_env() -> Self {
         let mut config = Self::default();
+        if let Ok(val) = std::env::var("LLAMA_CPP_SOURCE_DIR") {
+            config.source_path = val;
+        }
+        if let Ok(val) = std::env::var("LLAMA_CPP_EXECUTABLE") {
+            config.executable_path = val;
+        }
+        if let Ok(val) = std::env::var("LLAMA_SERVER") {
+            config.server_path = val;
+        }
         if let Ok(val) = std::env::var("LLAMA_CPP_MODEL_PATH") {
             config.model_path = val;
         }

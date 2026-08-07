@@ -18,6 +18,10 @@ pub struct BackendRouter {
     sd_cpp: Option<Arc<StableDiffusionCppBackend>>,
     /// llama.cpp 后端
     llama_cpp: Option<Arc<LlamaCppBackend>>,
+    default_image_model_path: String,
+    default_video_model_path: String,
+    svd_native_width: usize,
+    svd_native_height: usize,
     /// 系统状态
     system_stats: Arc<RwLock<SystemStats>>,
 }
@@ -27,18 +31,30 @@ impl BackendRouter {
         Self {
             sd_cpp: None,
             llama_cpp: None,
+            default_image_model_path: String::new(),
+            default_video_model_path: String::new(),
+            svd_native_width: 1024,
+            svd_native_height: 576,
             system_stats: Arc::new(RwLock::new(SystemStats { devices: vec![] })),
         }
     }
 
     /// 使用配置创建路由器
     pub fn with_configs(sd_config: SdCppConfig, llama_config: LlamaCppConfig) -> Self {
+        let default_image_model_path = sd_config.model_path.clone();
+        let default_video_model_path = sd_config.video_model_path.clone();
+        let svd_native_width = sd_config.svd_native_width;
+        let svd_native_height = sd_config.svd_native_height;
         let sd_cpp = Arc::new(StableDiffusionCppBackend::new(sd_config));
         let llama_cpp = Arc::new(LlamaCppBackend::new(llama_config));
 
         Self {
             sd_cpp: Some(sd_cpp),
             llama_cpp: Some(llama_cpp),
+            default_image_model_path,
+            default_video_model_path,
+            svd_native_width,
+            svd_native_height,
             system_stats: Arc::new(RwLock::new(SystemStats { devices: vec![] })),
         }
     }
@@ -58,6 +74,56 @@ impl BackendRouter {
             "clip" | "vae" => BackendType::LocalProcessor,
             _ => BackendType::StableDiffusionCpp,
         }
+    }
+
+    fn resolve_existing_model(candidates: &[&str]) -> Option<String> {
+        for candidate in candidates {
+            if std::path::Path::new(candidate).exists() {
+                return Some((*candidate).to_string());
+            }
+        }
+        None
+    }
+
+    fn is_svd_model(path: &str) -> bool {
+        let path = path.to_ascii_lowercase();
+        path.contains("svd") || path.contains("stable-video-diffusion")
+    }
+
+    fn resolve_default_image_model(&self, requested: &str) -> String {
+        let requested_lc = requested.to_ascii_lowercase();
+        if !requested.is_empty() && !requested_lc.contains("svd") {
+            return requested.to_string();
+        }
+
+        if !self.default_image_model_path.trim().is_empty() {
+            return self.default_image_model_path.clone();
+        }
+
+        Self::resolve_existing_model(&[
+            "models/checkpoints/v1-5-pruned-emaonly.safetensors",
+            "models/checkpoints/sdxl_base_1.0.safetensors",
+        ])
+        .unwrap_or_else(|| "v1-5-pruned-emaonly.safetensors".to_string())
+    }
+
+    fn resolve_svd_model(&self, requested: &str) -> String {
+        let requested_lc = requested.to_ascii_lowercase();
+        if !requested.is_empty() && requested_lc.contains("svd") {
+            return requested.to_string();
+        }
+
+        if !self.default_video_model_path.trim().is_empty() {
+            return self.default_video_model_path.clone();
+        }
+
+        Self::resolve_existing_model(&[
+            "models/diffusers/stable-video-diffusion-img2vid-xt/svd_xt.safetensors",
+            "models/checkpoints/svd_xt.safetensors",
+            "models/checkpoints/svd.safetensors",
+            "models/svd/svd_xt.safetensors",
+        ])
+        .unwrap_or_else(|| "svd_xt.safetensors".to_string())
     }
 
     /// 文生图
@@ -92,20 +158,43 @@ impl BackendRouter {
             Error::BackendError("stable-diffusion.cpp backend not configured".to_string())
         })?;
 
+        // Native text-conditioned video models (for example Wan/LTX) use the
+        // stable-diffusion.cpp video API directly. SVD remains an image-only
+        // model and therefore uses the compatibility T2I -> I2V composition.
+        if !params.model_path.trim().is_empty() && !Self::is_svd_model(&params.model_path) {
+            return backend.text_to_video(params).await.map_err(|error| {
+                Error::BackendError(format!("Native T2V failed: {}", error))
+            });
+        }
+
+        let t2i_model_path = self.resolve_default_image_model(&params.model_path);
+        let i2v_model_path = self.resolve_svd_model(&params.model_path);
+        let uses_svd = Self::is_svd_model(&i2v_model_path);
+        let (first_frame_width, first_frame_height) = if uses_svd {
+            (self.svd_native_width, self.svd_native_height)
+        } else {
+            (params.width, params.height)
+        };
+
         // Step 1: text_to_image 生成首帧
         let t2i_params = crate::backend::T2IParams {
             prompt: params.prompt.clone(),
             negative_prompt: params.negative_prompt.clone(),
-            width: params.width,
-            height: params.height,
+            width: first_frame_width,
+            height: first_frame_height,
             steps: params.steps,
             cfg: params.cfg,
             sampler: "dpm++2m_karras".to_string(),
             seed: params.seed,
-            model_path: params.model_path.clone(),
+            model_path: t2i_model_path.clone(),
+            loras: Vec::new(),
+            hires: None,
         };
 
-        info!("T2V combo: Step 1 - generating first frame via T2I");
+        info!(
+            "T2V combo: Step 1 - generating first frame via T2I using model={}",
+            t2i_model_path
+        );
         let first_frame = backend.text_to_image(t2i_params).await.map_err(|e| {
             Error::BackendError(format!("T2V combo T2I step failed: {}", e))
         })?;
@@ -122,12 +211,19 @@ impl BackendRouter {
             motion_bucket_id: 127,
             motion_scale: 1024.0,
             steps: params.steps,
-            cfg: 2.5, // SVD 推荐 cfg=2.5
+            cfg: params.cfg,
+            min_cfg: params.min_cfg,
+            noise_aug_strength: params.noise_aug_strength,
             seed: params.seed,
-            model_path: params.model_path.clone(),
+            model_path: i2v_model_path.clone(),
         };
 
-        info!("T2V combo: Step 2 - animating first frame via I2V (frames={}, fps={})", params.frames, params.fps);
+        info!(
+            "T2V combo: Step 2 - animating first frame via I2V using model={} (frames={}, fps={})",
+            i2v_model_path,
+            params.frames,
+            params.fps
+        );
         let video_data = backend.image_to_video(i2v_params).await.map_err(|e| {
             Error::BackendError(format!("T2V combo I2V step failed: {}", e))
         })?;
@@ -216,6 +312,7 @@ impl BackendRouter {
                 height,
                 seed: seed as usize,
                 model_path: model.to_string(),
+                loras: Vec::new(),
             };
 
             let image_data = self.image_to_image(params).await?;
@@ -233,6 +330,8 @@ impl BackendRouter {
                 sampler: sampling_method,
                 seed: seed as usize,
                 model_path: model.to_string(),
+                loras: Vec::new(),
+                hires: None,
             };
 
             let image_data = self.text_to_image(params).await?;

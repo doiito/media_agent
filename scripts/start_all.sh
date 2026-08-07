@@ -14,7 +14,7 @@ echo -e "${GREEN}=== media_agent + gliding_horse 启动脚本 ===${NC}"
 echo ""
 
 # 1. 检查配置文件
-CONFIG_FILE="${CONFIG_FILE:-config/agent.yaml}"
+CONFIG_FILE="${CONFIG_FILE:-config/config.json}"
 if [ ! -f "$CONFIG_FILE" ]; then
     echo -e "${YELLOW}Warning: Config file not found: $CONFIG_FILE${NC}"
     echo "Using default configuration..."
@@ -23,9 +23,14 @@ fi
 # 2. 创建必要目录
 mkdir -p data/agent_memory output logs skills workflows
 
-# 3. 启动 llama.cpp server（后台）
-echo -e "${GREEN}Starting llama.cpp server (LLM backend)...${NC}"
-if [ -f scripts/start_llama_server.sh ]; then
+# 3. 本地 Provider 才启动 llama.cpp server；DeepSeek 使用同一 OpenAI 兼容网关。
+if [ -z "${AGENT_LLM_PROVIDER:-}" ] && [ -f "$CONFIG_FILE" ] && command -v jq >/dev/null 2>&1; then
+    AGENT_LLM_PROVIDER="$(jq -r '.agent.llm.provider // "llama_cpp"' "$CONFIG_FILE")"
+fi
+AGENT_LLM_PROVIDER="${AGENT_LLM_PROVIDER:-llama_cpp}"
+export AGENT_LLM_PROVIDER
+if [ "$AGENT_LLM_PROVIDER" = "llama_cpp" ] && [ -f scripts/start_llama_server.sh ]; then
+    echo -e "${GREEN}Starting llama.cpp server (LLM backend)...${NC}"
     # 检查 llama.cpp server 是否已运行
     if pgrep -f "llama-server" > /dev/null; then
         echo -e "${YELLOW}llama.cpp server already running, skipping...${NC}"
@@ -51,9 +56,11 @@ if [ -f scripts/start_llama_server.sh ]; then
             exit 1
         fi
     fi
-else
+elif [ "$AGENT_LLM_PROVIDER" = "llama_cpp" ]; then
     echo -e "${YELLOW}Warning: llama.cpp server script not found${NC}"
     echo "Please ensure LLM backend is available at http://localhost:8081/v1"
+else
+    echo -e "${GREEN}Using remote OpenAI-compatible Agent provider: $AGENT_LLM_PROVIDER${NC}"
 fi
 
 # 4. 启动 media_agent server
@@ -63,12 +70,12 @@ SERVER_PORT="${SERVER_PORT:-8188}"
 # 使用 cargo run 启动（开发模式）
 # 或者使用编译后的二进制文件
 if [ -f target/release/comfyui-server ]; then
-    ./target/release/comfyui-server --config "$CONFIG_FILE"
+    ./target/release/comfyui-server
 elif [ -f target/debug/comfyui-server ]; then
-    ./target/debug/comfyui-server --config "$CONFIG_FILE"
+    ./target/debug/comfyui-server
 else
     echo "Building and running..."
-    cargo run --bin comfyui-server -- --config "$CONFIG_FILE"
+    cargo run --bin comfyui-server
 fi
 
 # 说明：

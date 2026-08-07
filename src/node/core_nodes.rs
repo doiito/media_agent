@@ -41,14 +41,24 @@ impl CheckpointLoaderNode {
 
     /// 查找模型文件
     fn find_model_file(name: &str) -> Option<String> {
-        let search_dirs = ["models/checkpoints", "models/diffusion"];
+        let requested = std::path::Path::new(name);
+        if requested.is_file() {
+            return Some(requested.to_string_lossy().into_owned());
+        }
+
+        let search_dirs = [
+            "models/checkpoints",
+            "models/diffusion",
+            "models/diffusion_models",
+            "models/wan2.2-ti2v-5b",
+        ];
         for dir in &search_dirs {
             let path = std::path::Path::new(dir).join(name);
             if path.exists() {
                 return Some(path.to_string_lossy().into_owned());
             }
             // 尝试添加扩展名
-            for ext in &["safetensors", "ckpt", "pt", "bin"] {
+            for ext in &["safetensors", "gguf", "ckpt", "pt", "bin"] {
                 let path_with_ext = std::path::Path::new(dir).join(format!("{}.{}", name, ext));
                 if path_with_ext.exists() {
                     return Some(path_with_ext.to_string_lossy().into_owned());

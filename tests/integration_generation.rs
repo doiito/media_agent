@@ -86,7 +86,11 @@ fn e2e_image_to_video_workflow_build() {
     let workflow = WorkflowBuilder::image_to_video(
         "/dev-data/ai-test/media_agent/test_input.png".to_string(),
         "svd.safetensors".to_string(),
-        14, 6, 127, 2.5, 20, 42,
+        "a person dancing".to_string(),
+        "static".to_string(),
+        1024,
+        576,
+        14, 6, 127, 3.0, 1.0, 0.02, 20, 42,
     )
     .expect("Failed to build image-to-video workflow");
 

@@ -1,0 +1,50 @@
+{
+  "cases": [
+    {
+      "id": "t2i-basic",
+      "message": "生成一张电影感的雨夜城市街道图片，霓虹灯倒映在湿润路面上",
+      "params": {
+        "intent": "text_to_image",
+        "width": 512,
+        "height": 512,
+        "steps": 20,
+        "cfg": 7.0,
+        "seed": 42,
+        "_explicit_keys": ["intent", "width", "height", "steps", "cfg", "seed"]
+      },
+      "required_prompt_terms": ["rain", "night", "city", "street", "neon", "wet"],
+      "expected_success": true
+    },
+    {
+      "id": "i2v-five-seconds",
+      "message": "让图中的人物自然跳舞，生成5秒短视频",
+      "image_path": "input/bk_0022.jpg",
+      "params": {
+        "intent": "image_to_video",
+        "negative_prompt": "static, frozen pose, blurry, distorted body, extra limbs, camera shake",
+        "width": 1024,
+        "height": 576,
+        "frames": 25,
+        "fps": 5,
+        "steps": 25,
+        "cfg": 6.0,
+        "seed": 42,
+        "_explicit_keys": ["intent", "negative_prompt", "width", "height", "frames", "fps", "steps", "cfg", "seed"]
+      },
+      "required_prompt_terms": ["danc"],
+      "expected_success": true
+    },
+    {
+      "id": "i2v-missing-input-must-fail",
+      "message": "把不存在的输入图片变成5秒视频",
+      "image_path": "input/does-not-exist.png",
+      "params": {
+        "intent": "image_to_video",
+        "frames": 25,
+        "fps": 5,
+        "_explicit_keys": ["intent", "frames", "fps"]
+      },
+      "expected_success": false
+    }
+  ]
+}

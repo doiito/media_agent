@@ -81,6 +81,12 @@ pub struct WorkflowExecutionRecord {
     pub parameters: Value,
     pub timestamp: chrono::DateTime<chrono::Utc>,
     pub error: Option<String>,
+    /// 启发式质量分(0..1)。None 表示未评分。
+    #[serde(default)]
+    pub quality_score: Option<f32>,
+    /// 执行时的显存档位,推荐只参考同档位历史。
+    #[serde(default)]
+    pub gpu_tier: String,
 }
 
 impl WorkflowExecutionRecord {
@@ -610,9 +616,18 @@ impl ComfyUiIntelligence {
 
     pub async fn recommend_parameters(&self, intent: &str, user_request: &str) -> ParameterRecommendation {
         let history = self.workflow_history.read().await;
-        let similar: Vec<&WorkflowExecutionRecord> = history.iter()
+        let same_intent: Vec<&WorkflowExecutionRecord> = history.iter()
             .filter(|r| r.intent == intent && r.success)
             .collect();
+
+        // 档位隔离:优先只参考同档位历史,避免跨档位参数污染
+        // (旧记录 gpu_tier 为空视为兼容任何档位)
+        let tier = crate::config::gpu_tier::GpuTier::detect(None).name();
+        let same_tier: Vec<&WorkflowExecutionRecord> = same_intent.iter()
+            .filter(|r| r.gpu_tier.is_empty() || r.gpu_tier == tier)
+            .copied()
+            .collect();
+        let similar = if same_tier.is_empty() { same_intent } else { same_tier };
 
         if similar.is_empty() {
             return ParameterRecommendation {
@@ -625,23 +640,26 @@ impl ComfyUiIntelligence {
 
         let mut width_sum = 0.0; let mut height_sum = 0.0;
         let mut steps_sum = 0.0; let mut cfg_sum = 0.0;
+        let mut total_weight = 0.0;
         let mut count = 0;
 
         for record in &similar {
+            let weight = f64::from(record.quality_score.unwrap_or(0.5)).max(0.2);
             if let Some(params) = record.parameters.as_object() {
-                width_sum += params.get("width").and_then(|v| v.as_f64()).unwrap_or(512.0);
-                height_sum += params.get("height").and_then(|v| v.as_f64()).unwrap_or(512.0);
-                steps_sum += params.get("steps").and_then(|v| v.as_f64()).unwrap_or(20.0);
-                cfg_sum += params.get("cfg").and_then(|v| v.as_f64()).unwrap_or(7.0);
+                width_sum += params.get("width").and_then(|v| v.as_f64()).unwrap_or(512.0) * weight;
+                height_sum += params.get("height").and_then(|v| v.as_f64()).unwrap_or(512.0) * weight;
+                steps_sum += params.get("steps").and_then(|v| v.as_f64()).unwrap_or(20.0) * weight;
+                cfg_sum += params.get("cfg").and_then(|v| v.as_f64()).unwrap_or(7.0) * weight;
+                total_weight += weight;
                 count += 1;
             }
         }
 
         if count > 0 {
-            let avg_width = (width_sum / count as f64) as u32;
-            let avg_height = (height_sum / count as f64) as u32;
-            let avg_steps = (steps_sum / count as f64) as u32;
-            let avg_cfg = (cfg_sum / count as f64) as f32;
+            let avg_width = (width_sum / total_weight) as u32;
+            let avg_height = (height_sum / total_weight) as u32;
+            let avg_steps = (steps_sum / total_weight) as u32;
+            let avg_cfg = (cfg_sum / total_weight) as f32;
 
             let query_record = WorkflowExecutionRecord {
                 execution_id: "query".to_string(),
@@ -654,6 +672,8 @@ impl ComfyUiIntelligence {
                 parameters: json!({}),
                 timestamp: chrono::Utc::now(),
                 error: None,
+                quality_score: None,
+                gpu_tier: String::new(),
             };
 
             let mut best_score = 0.0;
@@ -678,7 +698,7 @@ impl ComfyUiIntelligence {
                     "scheduler": "normal"
                 }),
                 reasoning: format!(
-                    "基于 {} 个历史成功案例推荐，最相似案例相似度 {:.2}",
+                    "基于 {} 个同档位历史成功案例的质量加权推荐，最相似案例相似度 {:.2}",
                     count, best_score
                 ),
                 confidence: (0.6 + best_score * 0.4).min(1.0),
@@ -910,6 +930,8 @@ mod tests {
             parameters: json!({"width": 768, "height": 768, "steps": 25}),
             timestamp: chrono::Utc::now(),
             error: None,
+                quality_score: None,
+                gpu_tier: String::new(),
         };
         intelligence.record_execution(record).await;
         let stats = intelligence.get_skill_stats().await;
@@ -947,6 +969,8 @@ mod tests {
                 parameters: json!({"width": 1024, "height": 1024, "steps": 30, "cfg": 8.0, "sampler_name": "dpmpp_2m"}),
                 timestamp: chrono::Utc::now(),
                 error: None,
+                quality_score: None,
+                gpu_tier: String::new(),
             }).await;
         }
         let rec = intelligence.recommend_parameters("text_to_image", "画猫").await;
@@ -966,6 +990,8 @@ mod tests {
             parameters: json!({"width": 768, "height": 768, "steps": 25, "cfg": 7.0, "denoise": 1.0}),
             timestamp: chrono::Utc::now(),
             error: None,
+                quality_score: None,
+                gpu_tier: String::new(),
         };
         let r2 = r1.clone();
         let similarity = r1.cosine_similarity(&r2);
@@ -985,6 +1011,8 @@ mod tests {
                 parameters: json!({"width": 768, "height": 768, "steps": 25, "cfg": 7.0, "denoise": 1.0}),
                 timestamp: chrono::Utc::now(),
                 error: None,
+                quality_score: None,
+                gpu_tier: String::new(),
             }).await;
         }
         let query = WorkflowExecutionRecord {
@@ -996,6 +1024,8 @@ mod tests {
             parameters: json!({"width": 768, "height": 768, "steps": 25, "cfg": 7.0, "denoise": 1.0}),
             timestamp: chrono::Utc::now(),
             error: None,
+                quality_score: None,
+                gpu_tier: String::new(),
         };
         let similar = intelligence.find_similar_workflows(&query, 5).await;
         assert!(!similar.is_empty());
@@ -1017,6 +1047,8 @@ mod tests {
                 }),
                 timestamp: chrono::Utc::now(),
                 error: None,
+                quality_score: None,
+                gpu_tier: String::new(),
             }).await;
         }
         let discovered = intelligence.discover_skill_patterns(3, 0.85).await;
@@ -1038,6 +1070,8 @@ mod tests {
             parameters: json!({"width": 768, "height": 768, "steps": 25, "cfg": 7.0}),
             timestamp: chrono::Utc::now(),
             error: None,
+                quality_score: None,
+                gpu_tier: String::new(),
         }).await;
         // 即使 hyperspace 未启用也能调用（返回空）
         let _results = intelligence.semantic_search_workflows("画猫", 5).await;

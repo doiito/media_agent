@@ -57,11 +57,31 @@ pub struct ApiServer {
     monitor: Arc<Monitor>,
     /// Agent Engine（gliding_horse 集成）
     agent: Arc<tokio::sync::Mutex<AgentEngine>>,
+    agent_enabled: bool,
+    agent_auto_initialize: bool,
 }
 
 impl ApiServer {
     pub fn new(
         config: ApiServerConfig,
+        engine: ExecutionEngine,
+        backend_router: BackendRouter,
+        node_registry: NodeRegistry,
+        monitor: Monitor,
+    ) -> Self {
+        Self::build(
+            config,
+            AppConfig::default(),
+            engine,
+            backend_router,
+            node_registry,
+            monitor,
+        )
+    }
+
+    fn build(
+        config: ApiServerConfig,
+        app_config: AppConfig,
         engine: ExecutionEngine,
         backend_router: BackendRouter,
         node_registry: NodeRegistry,
@@ -80,9 +100,12 @@ impl ApiServer {
             nodes_arc.clone(),
             event_bus.clone(),
             monitor_arc.clone(),
-            AppConfig::default(),
+            app_config.clone(),
         );
-        let agent = Arc::new(tokio::sync::Mutex::new(AgentEngine::new(agent_context)));
+        let agent = Arc::new(tokio::sync::Mutex::new(AgentEngine::with_config(
+            agent_context,
+            app_config.clone(),
+        )));
         
         Self {
             config,
@@ -92,6 +115,8 @@ impl ApiServer {
             event_bus,
             monitor: monitor_arc,
             agent,
+            agent_enabled: app_config.agent.enabled,
+            agent_auto_initialize: app_config.agent.auto_initialize,
         }
     }
 
@@ -103,8 +128,9 @@ impl ApiServer {
         node_registry: NodeRegistry,
     ) -> Self {
         let monitor = Monitor::new(app_config.monitor.clone());
-        Self::new(
+        Self::build(
             ApiServerConfig::from(&app_config),
+            app_config,
             engine,
             backend_router,
             node_registry,
@@ -124,9 +150,21 @@ impl ApiServer {
         self.monitor.clone().start().await;
         info!("Monitor started in background");
 
+        if self.agent_enabled && self.agent_auto_initialize {
+            let mut agent = self.agent.lock().await;
+            match agent.build_supervisor() {
+                Ok(()) => info!("Gliding Horse SupervisorAgent initialized"),
+                Err(error) => log::warn!(
+                    "Gliding Horse auto-initialization failed; direct /generate remains available: {}",
+                    error
+                ),
+            }
+        }
+
         // 创建共享状态
         let api_state = ApiState {
             engine: self.engine.clone(),
+            event_bus: self.event_bus.clone(),
             backend_router: self.backend_router.clone(),
             node_registry: self.node_registry.clone(),
             start_time: Instant::now(),
@@ -155,12 +193,13 @@ impl ApiServer {
 /// 构建路由（使用两个State需要nest结构）
 fn build_router(api_state: ApiState, ws_state: WsState) -> Router {
     // Agent API handlers
-    use crate::agent::handlers::{agent_chat, agent_status, agent_workflows, agent_init};
+    use crate::agent::handlers::{agent_chat, agent_generate, agent_status, agent_workflows, agent_init};
     
     // 主路由 - 使用 ApiState
     let api_routes = Router::new()
         // 健康检查和状态
         .route("/health", get(health_check))
+        .route("/runtime/preflight", get(native_runtime_preflight))
         .route("/system_stats", get(system_stats))
         .route("/stats", get(get_stats))
         // 工作流 API
@@ -179,6 +218,7 @@ fn build_router(api_state: ApiState, ws_state: WsState) -> Router {
         // 图像
         .route("/view", get(view_image))
         .route("/upload/image", post(upload_image))
+        .route("/generate", post(agent_generate))
         // 监控 API
         .route("/monitor/latest", get(monitor_latest))
         .route("/monitor/history", get(monitor_history))
@@ -192,6 +232,7 @@ fn build_router(api_state: ApiState, ws_state: WsState) -> Router {
         .route("/agent/status", get(agent_status))
         .route("/agent/workflows", get(agent_workflows))
         .route("/agent/init", post(agent_init))
+        .layer(axum::extract::DefaultBodyLimit::max(12 * 1024 * 1024))
         .with_state(api_state);
 
     // WebSocket 路由 - 使用 WsState

@@ -1,0 +1,13 @@
+diff --git a/src/model/diffusion/unet.hpp b/src/model/diffusion/unet.hpp
+--- a/src/model/diffusion/unet.hpp
++++ b/src/model/diffusion/unet.hpp
+@@ -242,6 +242,9 @@ public:
+ 
+         auto num_frames = ggml_arange(ctx->ggml_ctx, 0.f, static_cast<float>(timesteps), 1.f);
+         // since b is 1, no need to do repeat
++        if (std::getenv("MEDIA_SD_SVD_ZERO_TEMPORAL_POSITION") != nullptr) {
++            num_frames = ggml_scale(ctx->ggml_ctx, num_frames, 0.f);
++        }
+         auto t_emb = ggml_ext_timestep_embedding(ctx->ggml_ctx, num_frames, static_cast<int>(in_channels), max_time_embed_period);  // [N, in_channels]
+ 
+         auto emb = time_pos_embed_0->forward(ctx, t_emb);

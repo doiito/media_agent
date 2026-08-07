@@ -1,0 +1,14 @@
+diff --git a/src/model/diffusion/unet.hpp b/src/model/diffusion/unet.hpp
+--- a/src/model/diffusion/unet.hpp
++++ b/src/model/diffusion/unet.hpp
+@@ -263,7 +263,9 @@ public:
+ 
+             // in_channels == inner_dim
+             auto x_mix = x;
+-            x_mix      = ggml_add(ctx->ggml_ctx, x_mix, emb);  // [N, h * w, inner_dim]
++            if (std::getenv("MEDIA_SD_SVD_DISABLE_TEMPORAL_POSITION_EMBEDDING") == nullptr) {
++                x_mix = ggml_add(ctx->ggml_ctx, x_mix, emb);  // [N, h * w, inner_dim]
++            }
+ 
+             int64_t N = x_mix->ne[2];
+             int64_t T = timesteps;

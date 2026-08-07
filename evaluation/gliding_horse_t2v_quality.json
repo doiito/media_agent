@@ -1,0 +1,37 @@
+{
+  "cases": [
+    {
+      "id": "t2v-high-quality-keyframe-pipeline",
+      "message": "生成5秒短视频：一只金色机械蝴蝶在雨夜霓虹城市街道上飞行，镜头平稳跟随",
+      "params": {
+        "intent": "text_to_video",
+        "negative_prompt": "static, frozen, daylight, dry street, blurry, flicker, camera shake, distorted wings",
+        "width": 1024,
+        "height": 576,
+        "frames": 25,
+        "fps": 5,
+        "steps": 30,
+        "cfg": 6.0,
+        "seed": 44,
+        "quality": "high",
+        "_explicit_keys": [
+          "intent",
+          "negative_prompt",
+          "width",
+          "height",
+          "frames",
+          "fps",
+          "steps",
+          "cfg",
+          "seed",
+          "quality"
+        ]
+      },
+      "required_prompt_terms": ["mechanical", "butterfly", "neon", "fly"],
+      "required_pipeline": "native_t2i_keyframe_to_i2v",
+      "expected_width": 1024,
+      "expected_height": 576,
+      "expected_success": true
+    }
+  ]
+}
